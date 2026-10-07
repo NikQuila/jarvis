@@ -460,7 +460,7 @@ function demoState() {
       ev(22, 30, 23, 0, '🌙 Cierre del día'),
     ],
     whoop: { recovery: 78, hrv: 84, rhr: 52, sleepHours: 7.4, sleepPerf: 91 },
-    revenue: { revenue28d: 12480, mrr: 9850, activeSubs: 1240, trials: 96, newCustomers28d: 310 },
+    revenue: { revenue28d: 35302, mrr: 9850, activeSubs: 1240, trials: 96, newCustomers28d: 310 },
     companies: [],
   };
 }
