@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>J.A.R.V.I.S. · nodo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+  /* A satellite screen: the HUD's world continued on the monitors around it. ?dx=&dy= point toward the HUD. */
+  html, body { margin: 0; height: 100%; background: #01060c; overflow: hidden; cursor: none; }
+  canvas { position: fixed; inset: 0; }
+  .grid {
+    position: fixed; inset: 0; pointer-events: none;
+    background:
+      repeating-linear-gradient(0deg, rgba(0, 229, 255, 0.035) 0 1px, transparent 1px 3px),
+      linear-gradient(rgba(25, 216, 210, 0.05) 1px, transparent 1px) 0 0 / 48px 48px,
+      linear-gradient(90deg, rgba(25, 216, 210, 0.05) 1px, transparent 1px) 0 0 / 48px 48px,
+      radial-gradient(ellipse at center, transparent 35%, rgba(1, 6, 12, 0.9) 100%);
+  }
+  .brand {
+    position: fixed; left: 36px; bottom: 30px; font: 900 15px Orbitron, sans-serif; letter-spacing: 0.4em;
+    color: rgba(234, 252, 255, 0.85); text-shadow: 0 0 12px #19d8d2;
+  }
+  .brand small { display: block; margin-top: 8px; font: 11px 'Share Tech Mono', monospace; letter-spacing: 0.3em; color: #3d6563; text-shadow: none; }
+  .brand small b { color: #3ef2a8; font-weight: 400; animation: blink 1.8s infinite; }
+  @keyframes blink { 50% { opacity: 0.25; } }
+  .feed {
+    position: fixed; top: 34px; width: 280px; max-height: calc(100% - 140px); overflow: hidden;
+    font: 11px/1.65 'Share Tech Mono', monospace; color: rgba(25, 216, 210, 0.6); white-space: pre;
+    mask-image: linear-gradient(transparent, #000 15%, #000 80%, transparent);
+  }
+  .corner { position: fixed; width: 26px; height: 26px; border: 1px solid rgba(25, 216, 210, 0.5); }
+  .c1 { top: 18px; left: 18px; border-right: 0; border-bottom: 0; } .c2 { top: 18px; right: 18px; border-left: 0; border-bottom: 0; }
+  .c3 { bottom: 18px; left: 18px; border-right: 0; border-top: 0; } .c4 { bottom: 18px; right: 18px; border-left: 0; border-top: 0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="grid"></div>
+<div class="feed" id="feed"></div>
+<div class="corner c1"></div><div class="corner c2"></div><div class="corner c3"></div><div class="corner c4"></div>
+<div class="brand">J.A.R.V.I.S.<small id="node">NODO · ENLACE <b>ACTIVO</b></small></div>
+<script>
+  const q = new URLSearchParams(location.search)
+  // Direction to the HUD screen (unit-ish vector). The reactor's rings come in from that side.
+  const dx = Number(q.get('dx') ?? 1), dy = Number(q.get('dy') ?? 0)
+  document.getElementById('node').firstChild.textContent = `NODO ${q.get('n') || '02'} · ENLACE `
+  const feed = document.getElementById('feed')
+  feed.style[dx > 0 ? 'left' : 'right'] = '40px'
+
+  const cv = document.getElementById('c'), g = cv.getContext('2d')
+  let W, H, dpr
+  const resize = () => { dpr = Math.min(2, devicePixelRatio || 1); W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0) }
+  resize(); addEventListener('resize', resize)
+
+  // The reactor's center sits off-screen, toward the HUD.
+  const len = Math.hypot(dx, dy) || 1
+  const center = () => ({ x: W / 2 + (dx / len) * W * 0.62, y: H / 2 + (dy / len) * H * 0.62 })
+
+  const P = Array.from({ length: 260 }, () => ({ x: Math.random(), y: Math.random(), z: Math.random(), s: Math.random() * 0.0004 + 0.0001 }))
+  const rings = [0.34, 0.46, 0.58, 0.74, 0.92, 1.12].map((r, i) => ({ r, w: i % 2 ? 1.5 : 3, gap: 0.2 + i * 0.07, sp: (i % 2 ? -1 : 1) * (0.05 + i * 0.012) }))
+  let t0 = performance.now()
+  function frame(now) {
+    const t = (now - t0) / 1000
+    g.clearRect(0, 0, W, H)
+    const c = center(), R = Math.max(W, H)
+    // glow bleeding in from the HUD side
+    const glow = g.createRadialGradient(c.x, c.y, 0, c.x, c.y, R * 0.9)
+    glow.addColorStop(0, 'rgba(25,216,210,0.42)'); glow.addColorStop(0.4, 'rgba(25,216,210,0.12)'); glow.addColorStop(1, 'rgba(1,6,12,0)')
+    g.fillStyle = glow; g.fillRect(0, 0, W, H)
+    // rings
+    for (const k of rings) {
+      const rad = k.r * R, a0 = t * k.sp
+      g.lineWidth = k.w; g.strokeStyle = `rgba(80,240,235,${0.45 + 0.2 * Math.sin(t * 0.8 + k.r * 7)})`
+      g.shadowColor = '#19d8d2'; g.shadowBlur = k.w * 10
+      for (let s = 0; s < 3; s++) { g.beginPath(); g.arc(c.x, c.y, rad, a0 + s * 2.094, a0 + s * 2.094 + 2.094 - k.gap); g.stroke() }
+      g.shadowBlur = 0
+      // ticks
+      g.strokeStyle = 'rgba(25,216,210,0.45)'; g.lineWidth = 1.2
+      for (let i = 0; i < 72; i++) { const a = a0 * 0.5 + i * Math.PI / 36; const r1 = rad + 6, r2 = rad + (i % 6 ? 11 : 18); g.beginPath(); g.moveTo(c.x + Math.cos(a) * r1, c.y + Math.sin(a) * r1); g.lineTo(c.x + Math.cos(a) * r2, c.y + Math.sin(a) * r2); g.stroke() }
+    }
+    // particles drifting toward the HUD
+    for (const p of P) {
+      p.x += (dx / len) * p.s * (0.5 + p.z); p.y += (dy / len) * p.s * (0.5 + p.z)
+      if (p.x > 1.05 || p.x < -0.05 || p.y > 1.05 || p.y < -0.05) { p.x = dx > 0 ? -0.04 : dx < 0 ? 1.04 : Math.random(); p.y = dy > 0 ? -0.04 : dy < 0 ? 1.04 : Math.random() }
+      const a = 0.4 + p.z * 0.6 + 0.15 * Math.sin(t * 2 + p.z * 40)
+      g.fillStyle = p.z > 0.85 ? `rgba(62,242,168,${a})` : `rgba(25,216,210,${a})`
+      g.beginPath(); g.arc(p.x * W, p.y * H, 0.6 + p.z * 1.8, 0, 7); g.fill()
+    }
+    requestAnimationFrame(frame)
+  }
+  requestAnimationFrame(frame)
+
+  // A telemetry feed scrolling on the far side.
+  const words = ['SYNC', 'NEURAL', 'UPLINK', 'VAULT', 'CALENDAR', 'WHOOP', 'REVENUECAT', 'LINEAR', 'KAPSO', 'CLAUDE', 'MCP', 'GIT']
+  const hex = () => Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0').toUpperCase()
+  const line = () => `${new Date().toLocaleTimeString('es-CL', { hour12: false })}  ${words[Math.floor(Math.random() * words.length)].padEnd(11)} 0x${hex()}  ${(Math.random() * 100).toFixed(1).padStart(5)}%`
+  const lines = Array.from({ length: 60 }, line)
+  setInterval(() => { lines.push(line()); lines.shift(); feed.textContent = lines.join('\n') }, 420)
+</script>
+</body>
+</html>

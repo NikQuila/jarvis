@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import type { AgendaItem, JarvisState } from './api'
 import type { Phase } from '../store'
 import { speechProgress } from './voice'
+import { nowMs } from './time'
+import { cue, onScreensNote, openSatellites } from './screens'
 import { music } from './music'
 
 export type Line = { who: 'user' | 'jarvis'; text: string }
@@ -13,8 +15,8 @@ const fmtMoney = (n?: number) => (n == null ? '—' : `$${Math.round(n).toLocale
 const zone = (r?: number) => (r == null ? 'none' : r >= 67 ? 'green' : r >= 34 ? 'yellow' : 'red')
 
 function Clock() {
-  const [now, setNow] = useState(new Date())
-  useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id) }, [])
+  const [now, setNow] = useState(new Date(nowMs()))
+  useEffect(() => { const id = setInterval(() => setNow(new Date(nowMs())), 1000); return () => clearInterval(id) }, [])
   return (
     <div className="nik-clock">
       <span className="nik-time">{now.toLocaleTimeString('es-CL', { hour12: false })}</span>
@@ -60,8 +62,8 @@ const untilLabel = (ms: number) => {
 
 /** Past blocks fade; the one happening now says AHORA; the next one shows a countdown instead of looking current. */
 function Agenda({ items, onOpen }: { items: JarvisState['agenda']; onOpen: (e: AgendaItem) => void }) {
-  const [now, setNow] = useState(Date.now())
-  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(id) }, [])
+  const [now, setNow] = useState(nowMs())
+  useEffect(() => { const id = setInterval(() => setNow(nowMs()), 30_000); return () => clearInterval(id) }, [])
   const startOf = (e: (typeof items)[number]) => new Date(e.start).getTime()
   const endOf = (e: (typeof items)[number], i: number) =>
     e.end ? new Date(e.end).getTime() : i + 1 < items.length ? startOf(items[i + 1]) : startOf(e) + 60 * 60_000
@@ -185,6 +187,7 @@ function Caption({ text }: { text: string }) {
     }, 120)
     return () => clearInterval(id)
   }, [text])
+  useEffect(() => { cue(sentences[i]) }, [i, text]) // the satellite screens open what he's talking about
   return <p className="nik-caption" key={i}>{sentences[i]}</p>
 }
 
@@ -194,6 +197,11 @@ export function Hud(p: {
 }) {
   const [text, setText] = useState('')
   const [sheet, setSheet] = useState(false)
+  const [note, setNote] = useState('')
+  useEffect(() => {
+    let t = 0
+    onScreensNote((m) => { setNote(m); clearTimeout(t); t = window.setTimeout(() => setNote(''), 9000) })
+  }, [])
   const [open, setOpen] = useState<AgendaItem | null>(null)
   // Recording mode (R or ?rec=1): hides who you meet with, links and amounts, so you can film the screen.
   const [rec, setRec] = useState(() => new URLSearchParams(location.search).has('rec'))
@@ -212,8 +220,9 @@ export function Hud(p: {
     <div className={`nik-hud nik-phase-${p.phase} ${rec ? 'nik-rec' : ''}`}>
       <div className="nik-top">
         <div className="nik-brand">J.A.R.V.I.S.</div>
-        <div className="nik-status"><b />{PHASE_LABEL[p.phase] ?? ''}{p.data?.demo && <em className="nik-demo"> · DEMO</em>}{rec && <em className="nik-rec-dot"> · ● REC</em>}{p.error && <em> · {p.error}</em>}</div>
+        <div className="nik-status"><b />{PHASE_LABEL[p.phase] ?? ''}{p.data?.demo && <em className="nik-demo"> · DEMO</em>}{rec && <em className="nik-rec-dot"> · ● REC</em>}{p.error && <em> · {p.error}</em>}{note && <span className="nik-note">{note}</span>}</div>
         <div className="nik-topright">
+          <button className="nik-fs nik-screens" title="Abrir las otras pantallas (S)" onClick={openSatellites}>⧉ PANTALLAS</button>
           <button className="nik-fs" title="Música (M)" onClick={() => setMuted(music.toggle())}>{muted ? '♪̸' : '♪'}</button>
           <button className="nik-fs" title="Pantalla completa (F)" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())}>⛶</button>
           <Clock />

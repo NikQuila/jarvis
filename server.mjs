@@ -95,11 +95,13 @@ async function sendTemplate(to, name, params) {
 
 // ---------- claude ----------
 // oneShot: a background job (agenda fetch) — no conversation, only the given tools, runs outside the vault.
-function runClaude(prompt, oneShot = null, sessionKey = 'sessionId', extraSystem = '') {
+function runClaude(prompt, oneShot = null, sessionKey = 'sessionId', extraSystem = '', model = cfg.model) {
   return new Promise((resolve) => {
     const args = oneShot
-      ? ['-p', prompt, '--output-format', 'json', '--model', oneShot.model, '--allowedTools', ...oneShot.tools]
-      : ['-p', prompt, '--output-format', 'json', '--model', cfg.model,
+      ? ['-p', prompt, '--output-format', 'json', '--model', oneShot.model,
+        // bare: no tools and no MCP servers, which saves the seconds it takes to connect them
+        ...(oneShot.bare ? ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--tools', ''] : ['--allowedTools', ...oneShot.tools])]
+      : ['-p', prompt, '--output-format', 'json', '--model', model,
         '--append-system-prompt', SYSTEM_PROMPT + extraSystem,
         ...(cfg.permissions === 'full'
           ? ['--permission-mode', 'bypassPermissions', '--disallowedTools', ...FORBIDDEN_TOOLS]
@@ -255,6 +257,7 @@ function refreshAgenda() {
       const prev = state.agenda?.date === date ? state.agenda : { notified: {} };
       state.agenda = { date, events, notified: prev.notified, digestSent: prev.digestSent, fetchedAt: Date.now() };
       briefingCache.at = 0; // the spoken briefing reads the agenda
+      stateCache.at = 0;
       saveState();
       log(`agenda: ${events.length} events for ${date}`);
     } catch { log('agenda parse failed:', out.slice(0, 300)); }
@@ -411,6 +414,9 @@ async function whoopCallback(url, res) {
 // ---------- Jarvis (web HUD) ----------
 // Static UI in ./jarvis, API under /jarvis/api/*, protected by JARVIS_TOKEN (sent as ?k= once, then a header).
 const JARVIS_DIR = path.join(DIR, 'jarvis');
+// The HUD talks out loud, so speed beats depth: a faster model, and a fresh conversation after a pause.
+const JARVIS_MODEL = process.env.JARVIS_MODEL || 'sonnet';
+const JARVIS_FRESH_AFTER_MS = 30 * 60_000;
 const JARVIS_VOICE = `
 
 You are now speaking through the J.A.R.V.I.S. web interface, out loud. Answer in 1 to 3 short spoken sentences,
@@ -440,6 +446,7 @@ try { calendarLabels = JSON.parse(process.env.JARVIS_CALENDAR_LABELS || '{}'); }
 const REVENUE_TITLE = process.env.JARVIS_REVENUE_TITLE || 'REVENUE';
 const jarvisUi = () => ({
   wakeLine: process.env.JARVIS_WAKE_LINE || 'Buongiorno, JARVIS. ¿Cómo se viene el día?',
+  screens: (() => { try { return JSON.parse(process.env.JARVIS_SCREENS || 'null') || undefined; } catch { return undefined; } })(),
   revenueTitle: REVENUE_TITLE,
   calendarLabels,
 });
@@ -465,8 +472,19 @@ function demoState() {
   };
 }
 
-async function jarvisState() {
+// The panels' data, kept warm for a minute: the HUD polls it, and spoken answers read it without waiting.
+let stateCache = { at: 0, value: null, pending: null };
+function jarvisState() {
+  if (stateCache.pending) return stateCache.pending;
+  if (Date.now() - stateCache.at < 60_000 && stateCache.value) return Promise.resolve(stateCache.value);
+  stateCache.pending = jarvisStateFresh()
+    .then((v) => { stateCache = { at: Date.now(), value: v, pending: null }; return v; })
+    .catch((e) => { stateCache.pending = null; throw e; });
+  return stateCache.pending;
+}
+async function jarvisStateFresh() {
   if (process.env.JARVIS_DEMO === '1') return demoState();
+  revenueDays().catch(() => {}); // warm it for spoken answers (Supabase takes a few seconds)
   const date = todayStr();
   const out = { now: new Date().toISOString(), owner: cfg.ownerName, tz: TZ, ui: jarvisUi() };
   const events = (state.agenda?.date === date ? state.agenda.events : [])
@@ -513,7 +531,14 @@ function serveJarvisStatic(url, res) {
 
 // Optional: your app's day so far, if you store RevenueCat webhooks in a Supabase table `rc_events`
 // (RC_EVENTS_SUPABASE_REF + SUPABASE_ACCESS_TOKEN; read-only SQL, aggregates only).
+const daysCache = { at: 0, value: null };
 async function revenueDays() {
+  if (Date.now() - daysCache.at < 120_000 && daysCache.value) return daysCache.value;
+  const v = await revenueDaysFresh();
+  if (v) Object.assign(daysCache, { at: Date.now(), value: v });
+  return v;
+}
+async function revenueDaysFresh() {
   if (!process.env.SUPABASE_ACCESS_TOKEN || !process.env.RC_EVENTS_SUPABASE_REF) return null;
   const sql = `with d as (select type, period_type, is_trial_conversion, price,
       (to_timestamp(event_timestamp_ms / 1000.0) at time zone '${TZ}')::date as dia
@@ -547,7 +572,20 @@ const BRIEFING_STYLE = process.env.JARVIS_BRIEFING_STYLE ||
   'pero con el estilo de JARVIS (lo trata de "señor", un toque de ironía). Frases cortas y con punch, exclamaciones donde corresponda';
 // Only your app's numbers are said out loud by default; other companies' ARR stays private unless this is set.
 const BRIEFING_COMPANY_NUMBERS = process.env.JARVIS_BRIEFING_COMPANY_NUMBERS === '1';
-const briefingCache = { at: 0, text: '', pending: null };
+const briefingCache = { at: 0, text: '', pending: null, key: '' };
+// "As if it were HH:MM today" (the HUD's ?hora=09:45, to record a morning at night): shifts "now".
+function briefingNow(at) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(at || '');
+  if (!m) return Date.now();
+  const p = tzParts();
+  return Date.now() - ((Number(p.hour) * 60 + Number(p.minute)) - (Number(m[1]) * 60 + Number(m[2]))) * 60_000;
+}
+// The opening, in Italian with attitude, by time of day. JARVIS_GREETINGS="morning|afternoon|evening" changes it.
+const GREETINGS = (process.env.JARVIS_GREETINGS || '¡Buongiorno|¡Buon pomeriggio|¡Buonasera').split('|');
+function hello(now) {
+  const h = Number(tzParts(new Date(now)).hour);
+  return GREETINGS[h < 13 ? 0 : h < 19 ? 1 : 2] || GREETINGS[0];
+}
 function briefingFallback(s) {
   const parts = [`¡Buongiorno${CALL_ME ? `, ${CALL_ME}` : ''}!`];
   const w = s.whoop;
@@ -557,25 +595,27 @@ function briefingFallback(s) {
   if (left.length) parts.push(`Lo próximo: ${left[0].title.replace(/[^\p{L}\p{N}\s:,.()-]/gu, '').trim()}, a las ${left[0].time}.`);
   return parts.join(' ');
 }
-async function jarvisBriefing() {
-  if (briefingCache.pending) return briefingCache.pending;
-  if (Date.now() - briefingCache.at < 5 * 60_000 && briefingCache.text) return briefingCache.text;
+async function jarvisBriefing(at = '') {
+  if (briefingCache.pending && briefingCache.key === at) return briefingCache.pending;
+  if (briefingCache.key === at && Date.now() - briefingCache.at < 5 * 60_000 && briefingCache.text) return briefingCache.text;
+  briefingCache.key = at;
   briefingCache.pending = (async () => {
     const s = await jarvisState();
-    const now = Date.now();
+    const now = briefingNow(at);
     const app = s.ui?.revenueTitle && s.ui.revenueTitle !== 'REVENUE' ? s.ui.revenueTitle : 'tu app';
     const data = {
-      ahora: new Date().toLocaleString('es-CL', { timeZone: TZ, weekday: 'long', hour: '2-digit', minute: '2-digit' }),
+      ahora: new Date(now).toLocaleString('es-CL', { timeZone: TZ, weekday: 'long', hour: '2-digit', minute: '2-digit' }),
       whoop: s.whoop,
       app: s.revenue && { nombre: app, mrrUsd: s.revenue.mrr, revenueUltimos28diasUsd: s.revenue.revenue28d, suscriptoresActivos: s.revenue.activeSubs, trialsActivos: s.revenue.trials, ...(s.demo ? {} : await revenueDays().catch(() => null)) },
       otrasEmpresas: BRIEFING_COMPANY_NUMBERS ? s.companies?.filter((c) => c.name !== REVENUE_TITLE) : undefined,
       agenda: s.agenda.map((e) => ({ hora: e.time, fin: e.end ? hhmm(e.end) : '', titulo: e.title, yaPaso: new Date(e.end || e.start) < now })),
     };
     const out = await runClaude(
-      `Eres J.A.R.V.I.S., el asistente de ${CALL_ME || 'tu dueño'}. Te acaba de decir "${s.ui?.wakeLine || '¿Cómo se viene el día?'}". ` +
+      `Eres J.A.R.V.I.S., el asistente de ${CALL_ME || 'tu dueño'}. Te acaba de saludar con un "${s.ui?.wakeLine || '¿Cómo se viene el día?'}". ` +
       `Contéstale en voz alta. Estilo: ${BRIEFING_STYLE}. ` +
-      `Empieza exactamente con "¡Buongiorno, ${CALL_ME || 'señor'}!" y después, en este orden, saltándote lo que no venga en los datos: ` +
-      `1) cómo durmió y su recuperación (WHOOP), en una frase; si la recuperación es baja, igual con buena onda pero que baje la intensidad. ` +
+      `Empieza exactamente con "${hello(now)}, ${CALL_ME || 'señor'}!" y después, en este orden, saltándote lo que no venga en los datos: ` +
+      `1) WHOOP, en una frase y SIEMPRE con las dos cifras: las horas que durmió y el porcentaje de recuperación ("dormiste seis horas y media y tu recuperación está en ochenta y dos por ciento"); si la recuperación es baja, igual con buena onda pero que baje la intensidad. ` +
+      `1b) Justo después, si en la agenda hay un bloque de gym o entrenamiento de la mañana que ya pasó (yaPaso), felicítalo con ganas por haber entrenado tan temprano, diciendo la hora de inicio de ese bloque ("¡y ya metiste gym a las seis de la mañana! Eso es disciplina, señor"). ` +
       `2) la app (${app}), celebrándolo si va bien ("¡${app} la está rompiendo!"): los suscriptores nuevos de hoy si vienen (hoyHastaAhora; si son menos de 5, los de ayer), comparados con su promedio diario si le gana, y el total de suscriptores activos o el MRR. Cifras redondeadas como se dicen ("veintiocho suscriptores nuevos"). Si los números no son buenos, no inventes hype: dilo con calma. ` +
       `3) cómo vienen los proyectos hoy` +
       (BRIEFING_COMPANY_NUMBERS ? ' (con las cifras de otrasEmpresas)' : ' según los bloques de la agenda, sin cifras de otras empresas') +
@@ -597,7 +637,8 @@ async function jarvisBriefing() {
 const ELEVEN = {
   key: process.env.ELEVENLABS_API_KEY || '',
   voice: process.env.ELEVENLABS_VOICE_ID || '',
-  model: process.env.ELEVENLABS_MODEL || 'eleven_v4',
+  model: process.env.ELEVENLABS_MODEL || 'eleven_v4', // the most expressive: the prepared briefing
+  fastModel: process.env.ELEVENLABS_FAST_MODEL || 'eleven_v4_turbo', // live replies: same voice, much lower latency
 };
 const EDGE = {
   voice: process.env.EDGE_TTS_VOICE || '',
@@ -620,19 +661,19 @@ function edgeTts(text) {
     });
   });
 }
-async function elevenTts(text) {
+async function elevenTts(text, fast = false) {
   const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN.voice}?output_format=mp3_44100_128`, {
     method: 'POST',
     headers: { 'xi-api-key': ELEVEN.key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
-    body: JSON.stringify({ text, model_id: ELEVEN.model, voice_settings: { stability: 0.35, similarity_boost: 0.8, style: 0.5, use_speaker_boost: true } }),
+    body: JSON.stringify({ text, model_id: fast ? ELEVEN.fastModel : ELEVEN.model, voice_settings: { stability: 0.35, similarity_boost: 0.8, style: 0.5, use_speaker_boost: true } }),
   });
   if (!r.ok) throw new Error(`elevenlabs ${r.status} ${(await r.text()).slice(0, 200)}`);
   return Buffer.from(await r.arrayBuffer());
 }
 const ttsCache = new Map(); // text → mp3, last 30: retakes of the same briefing don't spend credits
-async function tts(text) {
+async function tts(text, fast = false) {
   if (ttsCache.has(text)) return ttsCache.get(text);
-  const buf = ELEVEN.key && ELEVEN.voice ? await elevenTts(text) : await edgeTts(text);
+  const buf = ELEVEN.key && ELEVEN.voice ? await elevenTts(text, fast) : await edgeTts(text);
   ttsCache.set(text, buf);
   if (ttsCache.size > 30) ttsCache.delete(ttsCache.keys().next().value);
   return buf;
@@ -646,6 +687,34 @@ function readJson(req) {
   });
 }
 
+// Asking him to do something (move, create, write, search…) needs the full agent; anything else is a question.
+const JARVIS_ACTION = /\b(mueve|mov[eé]|muével|cambia|crea|agend|agrega|añad|pon(e|me|lo|la)?|borra|elimina|cancela|anota|escrib|manda|env[ií]a|programa|recu[eé]rd|busca|investiga|revisa|abre|ab[ií]r|linear|tarea|commit|guarda|actualiza|responde|contesta|estudia|resume)\b/i;
+const quickHistory = []; // the last few HUD exchanges, so follow-ups make sense
+function jarvisRemember(q, a) { quickHistory.push({ q, a }); while (quickHistory.length > 6) quickHistory.shift(); }
+async function jarvisQuick(text, hora) {
+  const s = await jarvisState();
+  const now = briefingNow(hora);
+  const app = s.ui?.revenueTitle && s.ui.revenueTitle !== 'REVENUE' ? s.ui.revenueTitle : 'tu app';
+  const data = {
+    ahora: new Date(now).toLocaleString('es-CL', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }),
+    whoop: s.whoop,
+    app: s.revenue && { nombre: app, mrrUsd: s.revenue.mrr, revenueUltimos28diasUsd: s.revenue.revenue28d, suscriptoresActivos: s.revenue.activeSubs, trialsActivos: s.revenue.trials, ...(s.demo ? {} : await revenueDays().catch(() => null)) },
+    agenda: s.agenda.map((e) => ({ hora: e.time, fin: e.end ? hhmm(e.end) : '', titulo: e.title, yaPaso: new Date(e.end || e.start) < now, detalle: (e.description || '').slice(0, 300) })),
+  };
+  const history = quickHistory.map((x) => `Él: ${x.q}\nTú: ${x.a}`).join('\n');
+  const out = await runClaude(
+    `Eres J.A.R.V.I.S., el asistente de ${CALL_ME || 'tu dueño'}, hablando en voz alta por el HUD. ` +
+    `Responde en 1 a 3 frases cortas, en español con tuteo, con el estilo de JARVIS (lo tratas de "señor", calmado, preciso, con un toque de ironía). ` +
+    `Sin markdown, sin emojis, sin listas: es para decirlo en voz alta. Usa solo estos datos; si la pregunta necesita algo que no está aquí, dilo en una frase y ofrece hacerlo ("¿quieres que lo revise?"). ` +
+    `No nombres clientes ni personas externas (puede ir a un video): los títulos de la agenda a veces traen el cliente después de "/"; di solo "una reunión". La hora actual es la de "ahora".\n\n` +
+    `Datos (JSON): ${JSON.stringify(data)}\n\n` + (history ? `Conversación reciente:\n${history}\n\n` : '') + `Él: ${text}`,
+    { model: JARVIS_MODEL, bare: true, cwd: DIR },
+  );
+  const reply = out.startsWith('⚠️') ? 'Se me cruzaron los cables, señor. ¿Me lo repites?' : out.trim();
+  jarvisRemember(text, reply);
+  return reply;
+}
+
 function handleJarvis(req, res, url) {
   if (!url.pathname.startsWith('/jarvis/api/')) return serveJarvisStatic(url, res);
   if (!jarvisAuthed(req, url)) { res.writeHead(401).end('unauthorized'); return; }
@@ -655,16 +724,16 @@ function handleJarvis(req, res, url) {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/jarvis/api/briefing') {
-    jarvisBriefing().then((text) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text })))
+    jarvisBriefing(url.searchParams.get('hora') || '').then((text) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text })))
       .catch((e) => { log('jarvis briefing error', e); res.writeHead(500).end('{}'); });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/jarvis/api/tts') {
     if (!ttsReady()) { res.writeHead(501).end('no tts'); return; }
-    readJson(req).then(async ({ text }) => {
+    readJson(req).then(async ({ text, fast }) => {
       text = String(text || '').slice(0, 1500).trim();
       if (!text) { res.writeHead(400).end(); return; }
-      const mp3 = await tts(text);
+      const mp3 = await tts(text, !!fast);
       res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': mp3.length, 'Cache-Control': 'no-store' }).end(mp3);
     }).catch((e) => { log('tts error', e.message); res.writeHead(502).end('tts failed'); });
     return;
@@ -673,14 +742,30 @@ function handleJarvis(req, res, url) {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      let text = '';
-      try { text = String(JSON.parse(Buffer.concat(chunks)).text || '').slice(0, 4000).trim(); } catch {}
+      let text = '', hora = '';
+      try { const b = JSON.parse(Buffer.concat(chunks)); text = String(b.text || '').slice(0, 4000).trim(); hora = String(b.hora || ''); } catch {}
       if (!text) { res.writeHead(400).end('{}'); return; }
       log('jarvis in:', text.slice(0, 200));
+      // Questions take the fast path (~5 s): Claude with the HUD's data and no tools. Requests to do something go
+      // to the full agent below, which can act but takes 15-30 s.
+      if (!JARVIS_ACTION.test(text)) {
+        jarvisQuick(text, hora).then((reply) => {
+          log('jarvis quick out:', reply.slice(0, 200));
+          res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ reply }));
+        }).catch((e) => { log('jarvis quick error', e); res.writeHead(500).end('{}'); });
+        return;
+      }
+      // The HUD's video mode (?hora=09:45): answer as if it were that time today.
+      const fake = /^\d{1,2}:\d{2}$/.test(hora);
+      const timeNote = fake ? `\nFor this conversation, act as if it were ${hora} today (he is recording a video). Never mention the real time.` : '';
+      const prompt = fake ? `[Modo video: para esta respuesta son las ${hora} de hoy. Esa es la hora actual: no uses la hora real ni corras \`date\`; lo que está antes de las ${hora} ya pasó y lo de después viene.]\n\n${text}` : text;
       // Same queue as WhatsApp: one Claude run at a time, so git and the vault never race.
       queue = queue.then(async () => {
         if (cfg.gitSync) await git('pull', '--rebase', '--autostash');
-        let reply = await runClaude(text, null, 'jarvisSessionId', JARVIS_VOICE);
+        if (Date.now() - (state.jarvisLastAt || 0) > JARVIS_FRESH_AFTER_MS) delete state.jarvisSessionId;
+        state.jarvisLastAt = Date.now();
+        let reply = await runClaude(prompt, null, 'jarvisSessionId', JARVIS_VOICE + timeNote, JARVIS_MODEL);
+        jarvisRemember(text, reply);
         if (cfg.gitSync) await git('push');
         log('jarvis out:', reply.slice(0, 200));
         res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ reply }));

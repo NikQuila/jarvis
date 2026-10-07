@@ -233,13 +233,6 @@ body { -webkit-tap-highlight-color: transparent; }
 .nik-rec .nik-amt, .nik-rec .nik-kpis dd, .nik-rec .nik-money { filter: blur(9px); }
 .nik-status em.nik-demo { color: var(--cy); }
 
-/* standby: black screen listening for the wake line; a faint dot so you know the mic is on (barely visible on camera) */
-.nik-standby { position: fixed; inset: 0; z-index: 20; background: #01060c; border: 0; cursor: pointer; }
-.nik-standby i {
-  position: absolute; left: 50%; bottom: 28px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%;
-  background: var(--cy); opacity: 0.25; animation: nik-breathe 2.4s ease-in-out infinite;
-}
-@keyframes nik-breathe { 50% { opacity: 0.6; box-shadow: 0 0 10px var(--cy); } }
 .nik-caption {
   margin: 0 auto; max-width: 900px; font-family: 'Rajdhani', sans-serif; font-weight: 600;
   font-size: clamp(22px, 2.6vw, 36px); line-height: 1.25; color: var(--glow);
@@ -247,3 +240,6 @@ body { -webkit-tap-highlight-color: transparent; }
   animation: nik-caption-in 0.35s ease both;
 }
 @keyframes nik-caption-in { from { opacity: 0; transform: translateY(6px); filter: blur(3px); } }
+.nik-screens { width: auto !important; padding: 0 10px; font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: 0.15em; }
+.nik-note { display: block; margin-top: 6px; font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: 0.08em; color: var(--amber); text-transform: none; }
+@media (max-width: 760px), (pointer: coarse) and (max-width: 1000px) { .nik-screens { display: none; } }

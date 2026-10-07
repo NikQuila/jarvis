@@ -8,9 +8,9 @@ git), en un servidor de DigitalOcean que está prendido 24/7. Le hablo de dos fo
 - **Por WhatsApp.** Le escribo o le mando un audio desde cualquier parte. Me manda el día en la mañana, me avisa antes
   de cada bloque del calendario, y hace las cosas que le pido: mueve el calendario, crea tareas, me resume un podcast,
   edita mis notas.
-- **En un HUD estilo Iron Man** (`/jarvis`), con voz. Le digo *"Buongiorno, JARVIS. ¿Cómo se viene el día?"*, el
-  reactor se enciende y me cuenta el día: cómo dormí (WHOOP), cómo va mi app (RevenueCat) y lo que tengo en la agenda.
-  Después le sigo hablando con el micrófono.
+- **En un HUD estilo Iron Man** (`/jarvis`), con voz. Le digo *"Buongiorno, JARVIS"* y me cuenta el día: cómo dormí
+  (WHOOP), cómo va mi app (RevenueCat) y lo que tengo en la agenda. Mientras habla, en los otros monitores va abriendo
+  las páginas de lo que dice. Después le sigo hablando con el micrófono.
 
 Los dos usan el mismo cerebro, así que sabe lo mismo por los dos lados.
 
@@ -35,7 +35,9 @@ Lo armé con Claude Code. Este repo tiene todo para que armes el tuyo.
 | 🎧 **Podcasts** | Busca el episodio, lo transcribe en el servidor con whisper.cpp y te lo resume |
 | 🔌 **Tus herramientas** | Lo que conectes por MCP: Linear, Notion, RevenueCat, Supabase, GitHub, tu banco (solo lectura)… |
 | 🖥️ **HUD con voz** | Biometría de WHOOP, KPIs de RevenueCat y la agenda, con micrófono. Tocas un evento y ves su detalle |
-| 🗣️ **"¿Cómo se viene el día?"** | Le dices la frase y el reactor se enciende: te cuenta el día en voz alta, con energía, con voz natural (ElevenLabs o Microsoft) y subtítulos de película |
+| 🗣️ **"¿Cómo se viene el día?"** | Le dices cualquier cosa y te cuenta el día en voz alta, con energía, con voz natural (ElevenLabs o Microsoft) y subtítulos de película |
+| 🖥️ **Pantallas alrededor** | Los otros monitores muestran un fondo que continúa el HUD y, mientras habla, abren la página real de lo que va diciendo (WHOOP, RevenueCat, el calendario) |
+| ⚡ **Respuestas rápidas** | Las preguntas se contestan en ~5 segundos; lo que le pides hacer va al agente completo |
 
 ## Cómo funciona
 
@@ -191,13 +193,22 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
 
 - **Paneles:** biometría de WHOOP (recovery, HRV, FC en reposo, sueño), revenue y MRR de RevenueCat y la agenda del
   día, con cuenta regresiva a lo próximo. Tocas un evento y ves su checklist, la gente y el link de la reunión.
-- **Cómo se despierta:** abres el HUD y tocas la pantalla una vez (el navegador exige ese toque para el audio y el
-  micrófono). Queda en negro, escuchando. Le dices *"Buongiorno, JARVIS. ¿Cómo se viene el día?"*, el reactor se
-  enciende y te cuenta el día: cómo dormiste, cómo va tu app (suscriptores nuevos de hoy si los tienes, MRR), cómo
-  vienen tus proyectos y la agenda. Si el micrófono no te entiende, `Espacio` o un toque hacen lo mismo.
+- **Cómo se despierta:** abres el HUD y queda escuchando. **Lo primero que digas lo despierta** (por ejemplo
+  *"Buongiorno, JARVIS"*) y te cuenta el día: saluda según la hora (*Buongiorno*, *Buon pomeriggio* o *Buonasera*),
+  cuántas horas dormiste y tu recuperación, te felicita si ya entrenaste en la mañana, cómo va tu app (suscriptores
+  nuevos de hoy si los tienes, MRR) y lo que queda de la agenda. `Espacio` hace lo mismo. Haz un click en cualquier
+  parte antes: el navegador no deja sonar nada hasta que tocas la página una vez.
 - **El reporte del día** lo escribe Claude con los datos de los paneles (unos 20-30 s). El HUD lo pide apenas abres la
-  página, así que **espera ~40 segundos antes de tocar** y responde sin demora. Se renueva cada 5 minutos; si repites la
-  toma antes, dice lo mismo y no gasta créditos de voz. No nombra clientes ni personas, por si lo grabas.
+  página, así que **espera ~40 segundos antes de hablarle** y responde sin demora. Se renueva cada 5 minutos; si repites
+  la toma antes, dice lo mismo y no gasta créditos de voz. No nombra clientes ni personas, por si lo grabas.
+- **Respuestas rápidas:** las preguntas ("¿cómo dormí?", "¿qué viene después?") se contestan en ~5 segundos con los
+  datos del HUD, sin herramientas y con un modelo rápido (`JARVIS_MODEL`, por defecto `sonnet`). Lo que le pides hacer
+  ("mueve…", "crea…", "anota…") va al agente completo, que puede actuar y tarda 15-30 segundos.
+- **Las pantallas de alrededor:** si tienes más monitores, toca **⧉ PANTALLAS** (o `S`). Se abre una ventana en cada
+  uno con un fondo que continúa el HUD: los anillos del reactor entran desde el lado donde está el HUD. Mientras JARVIS
+  habla, cada frase abre la página real de lo que dice, alternando pantallas: WHOOP, RevenueCat, Google Calendar. Las
+  cambias con `JARVIS_SCREENS`. Solo Chrome; la primera vez pide **"Administrar ventanas en todas tus pantallas"** y
+  hay que permitir **ventanas emergentes** para el sitio. Deja la sesión iniciada en esas páginas.
 - **Voz:** el servidor genera el audio y el reactor late con la voz real. Usa la primera que tengas configurada:
   1. **ElevenLabs** (`ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID`): la más natural y la única que "actúa". Las voces
      latinas de la biblioteca y el modelo `eleven_v4` necesitan plan pagado (Starter, US$6). Busca en
@@ -215,10 +226,14 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
   (CC BY 4.0, ver `jarvis-ui/public/audio/CREDITS.md`); reemplaza cualquier MP3 por otro con el mismo nombre.
 - **Para grabar la pantalla:** `F` la deja en pantalla completa y `R` activa el **modo grabación**, que difumina los montos
   y esconde los participantes, los links y los lugares de los eventos. También sirve abrirlo con `?rec=1`.
+- **Para grabar la mañana de noche:** abre el HUD con **`?hora=09:45`**. El reloj, la agenda, el reporte y las
+  respuestas hacen como si fueran esa hora de hoy.
 
 | Tecla | Qué hace |
 |---|---|
-| `Espacio` | Hablar (en el Mac). En la pantalla negra, despierta a JARVIS |
+| `Espacio` | Hablar (en el Mac). Antes del reporte, despierta a JARVIS |
+| `S` | Abrir las pantallas de alrededor |
+| `B` | Volver las pantallas de alrededor a su fondo (antes de cada toma) |
 | `F` | Pantalla completa |
 | `R` | Modo grabación |
 | `M` | Silenciar la música |
@@ -226,8 +241,8 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
   [adewaskar/jarvis](https://github.com/adewaskar/jarvis) (MIT, ver `jarvis-ui/LICENSE`). Los paneles, la voz y la
   conexión con el servidor están en `src/App.tsx` y `src/nik/`.
 - **API:** `GET /jarvis/api/state` (los datos de los paneles), `GET /jarvis/api/briefing` (el reporte del día),
-  `POST /jarvis/api/ask` (pregunta → respuesta corta para voz, con su propia sesión) y `POST /jarvis/api/tts` (texto →
-  MP3). Está protegida con `JARVIS_TOKEN`: sin la clave, responde 401.
+  `POST /jarvis/api/ask` (pregunta → respuesta corta para voz) y `POST /jarvis/api/tts` (texto → MP3). Las tres
+  aceptan la hora del modo video (`hora`). Está protegida con `JARVIS_TOKEN`: sin la clave, responde 401.
 
 ```bash
 # en tu Mac
@@ -263,7 +278,10 @@ Nada tuyo vive en el código. Lo personal está en dos lugares:
 | `OWNER_NAME` | Cómo te llama | `Tony` |
 | `JARVIS_REVENUE_TITLE` | El título del panel de RevenueCat | `MI APP` |
 | `JARVIS_CALENDAR_LABELS` | El nombre de cada calendario, según el final del correo | `{"@gmail.com":"PERSONAL","@acme.com":"ACME"}` |
-| `JARVIS_WAKE_LINE` | Tu frase para despertarlo (es el subtítulo; cualquier frase con "giorno", "JARVIS" o "despierta" lo enciende) | `Buon fucking giorno, JARVIS. ¿Cómo se viene el día?` |
+| `JARVIS_WAKE_LINE` | Tu frase para despertarlo: es tu subtítulo en pantalla (cualquier cosa que digas lo despierta) | `Buon fucking giorno, JARVIS.` |
+| `JARVIS_GREETINGS` | Cómo te saluda en la mañana\|tarde\|noche | `¡Buon fucking giorno\|¡Buon fucking pomeriggio\|¡Buona fucking sera` |
+| `JARVIS_SCREENS` | Qué página abre cada pantalla de alrededor según lo que dice JARVIS | `[{"match":"dorm\|recuper","url":"https://app.whoop.com/"}]` |
+| `JARVIS_MODEL` | El modelo de las respuestas del HUD | `sonnet` (rápido) u `opus` (más profundo) |
 | `JARVIS_CALL_ME` | Cómo te llama en el reporte (si no, `OWNER_NAME`) | `Nicolás` |
 | `JARVIS_BRIEFING_STYLE` | El tono del reporte | `calmado y británico, como el JARVIS de la película` |
 | `JARVIS_BRIEFING_COMPANY_NUMBERS` | Que diga también el ARR de `JARVIS_COMPANIES` (por defecto solo los de tu app) | `1` |

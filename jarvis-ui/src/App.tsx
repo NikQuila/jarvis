@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Scene } from './scene/Scene'
-import { Boot } from './ui/Boot'
 import { useStore } from './store'
 import { Hud, type Line } from './nik/Hud'
 import { ask, getBriefing, getState, initKey, setKey, type JarvisState } from './nik/api'
 import { canListen, listen, listenFor, preload, speak, stopSpeaking, unlockAudio } from './nik/voice'
+import { openSatellites, prepareScreens, resetSatellites, setCues } from './nik/screens'
 import { music } from './nik/music'
+import { FAKE_HOUR } from './nik/time'
 import './nik/nik.css'
 
-const BOOT_MS = 6400
 
-// The wake line (JARVIS_WAKE_LINE on the server). You say it; JARVIS powers up and answers with the day's briefing.
-// Matching is loose on purpose: speech recognition hears "buongiorno" as anything from "bon" to "yorno".
-const WAKE = /giorno|yorno|jorno|journo|\bbu?on\b|jarvis|yarvis|despierta|c[oó]mo se viene/i
+// Waking him: while he waits, anything you say wakes him (your JARVIS_WAKE_LINE, or whatever you like). Space too.
+const WAKE = /\S{2,}/
+// Through the mic button, these ask for the briefing too (not plain "JARVIS", which starts any request).
+const BRIEFING_ASK = /wake|weik|walk|wokin|g[uü]e[iy] ?cap|despierta|lev[aá]nta|giorno|c[oó]mo (se viene|viene|va|estoy|est[aá]) (el|en el|mi) d[ií]a/i
 
 export default function App() {
   const phase = useStore((s) => s.phase)
@@ -22,25 +23,34 @@ export default function App() {
   const [lines, setLines] = useState<Line[]>([])
   const [interim, setInterim] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const stopRef = useRef<(() => void) | null>(null)
-  const dataRef = useRef<JarvisState | null>(null)
-  dataRef.current = data
-  const [standby, setStandby] = useState(false)
+  const [awaitingWake, setAwaitingWake] = useState(true) // until the wake line (or Space) starts the briefing
   const briefing = useRef<Promise<string> | null>(null)
   const stopWake = useRef<(() => void) | null>(null)
+  const awaitingRef = useRef(true)
+  const dataRef = useRef<JarvisState | null>(null)
+  dataRef.current = data // same as awaitingWake, readable from the mic callbacks without re-subscribing
+  const stopRef = useRef<(() => void) | null>(null)
 
   const refresh = useCallback(() => {
     getState().then((s) => { setData(s); setError(null) })
       .catch((e) => setError(e.message === 'unauthorized' ? 'Clave inválida' : 'Sin conexión con el servidor'))
   }, [])
 
-  // ?skip=1 jumps straight to the HUD (screenshots / quick reloads); audio still needs a tap to unlock.
+  // Straight to the HUD: no start screen. The first click or key anywhere unlocks audio (a browser rule).
   useEffect(() => {
-    if (new URLSearchParams(location.search).has('skip')) setPhase('dormant')
+    setPhase('dormant')
+    prepareScreens()
+    const unlock = () => { unlockAudio(); speechSynthesis.speak(new SpeechSynthesisUtterance(' ')); music.ambient(true) }
+    addEventListener('pointerdown', unlock, { capture: true, once: true })
+    addEventListener('keydown', unlock, { capture: true, once: true })
+    return () => { removeEventListener('pointerdown', unlock, true); removeEventListener('keydown', unlock, true) }
   }, [setPhase])
 
   // The work track rises while Jarvis is thinking or running a tool.
   useEffect(() => { music.work(phase === 'thinking' || phase === 'tooling') }, [phase])
+
+  // Which page each satellite screen opens for each topic (JARVIS_SCREENS on the server).
+  useEffect(() => { if (data?.ui?.screens) setCues(data.ui.screens) }, [data?.ui?.screens])
 
   useEffect(() => {
     if (!key) return
@@ -56,50 +66,51 @@ export default function App() {
     setPhase('dormant')
   }, [setPhase])
 
-  // The briefing takes ~20-30 s to write (and to voice), so it starts as soon as the page opens, before the tap.
+  // The briefing takes ~20-30 s to write, so it starts as soon as the page opens.
   useEffect(() => {
     if (!key || briefing.current) return
-    briefing.current = getBriefing().then(({ text }) => { preload(text); return text })
+    briefing.current = getBriefing(FAKE_HOUR).then(({ text }) => { preload(text); return text })
       .catch(() => 'Buongiorno. Todos los sistemas en línea, pero no pude armar el reporte del día.')
   }, [key])
 
-  // First tap: unlock audio and the mic, then wait in the dark for the wake line.
-  const power = useCallback(() => {
-    unlockAudio()
-    speechSynthesis.speak(new SpeechSynthesisUtterance(' '))
-    setStandby(true)
-  }, [])
-
-  // The wake line (or a tap / Space as a fallback): the reactor boots, then the briefing.
-  const wake = useCallback(() => {
+  // The day's briefing, out loud. Also what "Wake up" / "¿cómo se viene el día?" get when said through the mic.
+  const playBriefing = useCallback(async (heard?: string) => {
+    awaitingRef.current = false
     stopWake.current?.()
     stopWake.current = null
-    setStandby(false)
-    setLines([{ who: 'user', text: dataRef.current?.ui?.wakeLine || 'Buongiorno, JARVIS. ¿Cómo se viene el día?' }])
+    setAwaitingWake(false)
+    resetSatellites()
+    stopSpeaking()
+    setInterim('')
+    // What speech recognition hears is rough: show the configured wake line instead when it sounds like it.
+    const line = dataRef.current?.ui?.wakeLine || 'Buongiorno, JARVIS.'
+    setLines(heard ? [{ who: 'user', text: /giorno|yorno|jorno|bon|buen|jarvis/i.test(heard) ? line : heard }] : [])
     music.boot()
-    setPhase('boot')
-    setTimeout(async () => {
-      setPhase('dormant')
-      music.ambient(true)
-      await say(await (briefing.current ?? Promise.resolve('Buongiorno.')))
-    }, BOOT_MS)
+    setPhase('thinking')
+    await say(await (briefing.current ?? Promise.resolve('Buongiorno.')))
   }, [setPhase, say])
 
+  const wake = useCallback((heard?: string) => { if (awaitingRef.current) playBriefing(heard) }, [playBriefing])
+
+  // Listening for the wake needs the mic permission already granted for this site (Chrome remembers it).
   useEffect(() => {
-    if (!standby) return
+    if (!key || !awaitingWake) return
     stopWake.current = listenFor(WAKE, wake)
     return () => { stopWake.current?.(); stopWake.current = null }
-  }, [standby, wake])
+  }, [key, awaitingWake, wake])
 
   const send = useCallback(async (text: string) => {
     text = text.trim()
     if (!text) return
+    if (awaitingRef.current || (BRIEFING_ASK.test(text) && text.split(/\s+/).length <= 8)) return playBriefing(text) // the first thing he says, or "¿cómo se viene el día?"
+    awaitingRef.current = false
+    setAwaitingWake(false) // talking to him directly also ends the wait for the wake line
     stopSpeaking()
     setInterim('')
     setLines((l) => [...l.slice(-6), { who: 'user', text }])
     setPhase('thinking')
     try {
-      const { reply } = await ask(text)
+      const { reply } = await ask(text, FAKE_HOUR)
       refresh()
       // The server re-reads the calendar in the background after a calendar change (~30-60 s): poll a few times.
       for (const ms of [20_000, 45_000, 75_000]) setTimeout(refresh, ms)
@@ -108,11 +119,14 @@ export default function App() {
       setPhase('dormant')
       setLines((l) => [...l, { who: 'jarvis', text: e.message === 'unauthorized' ? 'Clave inválida.' : 'Perdí la conexión con el servidor.' }])
     }
-  }, [setPhase, say, refresh])
+  }, [setPhase, say, refresh, playBriefing])
 
   const toggleMic = useCallback(async () => {
     if (phase === 'listening') { stopRef.current?.(); return }
     if (phase === 'thinking') return
+    stopWake.current?.() // one recognizer at a time
+    awaitingRef.current = false
+    setAwaitingWake(false)
     stopSpeaking()
     setPhase('listening')
     const { done, stop } = listen(setInterim)
@@ -126,12 +140,15 @@ export default function App() {
   // Space bar = push to talk on the Mac; F = full screen (no browser bar, for recording).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // S = (re)open the satellite screens, B = back to their background
+      if (e.code === 'KeyS' && (e.target as HTMLElement)?.tagName !== 'INPUT') { openSatellites(); return }
+      if (e.code === 'KeyB' && (e.target as HTMLElement)?.tagName !== 'INPUT') { resetSatellites(); return }
       if (e.code === 'KeyF' && (e.target as HTMLElement)?.tagName !== 'INPUT') {
         if (document.fullscreenElement) document.exitFullscreen()
         else document.documentElement.requestFullscreen?.()
         return
       }
-      if (e.code === 'Space' && standby) { e.preventDefault(); wake(); return }
+      if (e.code === 'Space' && awaitingWake && (e.target as HTMLElement)?.tagName !== 'INPUT') { e.preventDefault(); wake(dataRef.current?.ui?.wakeLine || 'Buongiorno, JARVIS.'); return }
       if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT' && phase !== 'offline' && phase !== 'boot') {
         e.preventDefault()
         toggleMic()
@@ -139,7 +156,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [toggleMic, phase, standby, wake])
+  }, [toggleMic, phase, awaitingWake, wake])
 
   if (!key) {
     return (
@@ -156,16 +173,6 @@ export default function App() {
     <>
       <Scene />
       <div className="nik-grid" />
-      <Boot />
-      {phase === 'offline' && standby && (
-        <button className="nik-standby" onClick={wake} aria-label="Despertar a JARVIS"><i /></button>
-      )}
-      {phase === 'offline' && !standby && (
-        <button className="nik-power" onClick={power}>
-          <span className="nik-brand">J.A.R.V.I.S.</span>
-          <span className="nik-power-hint">TOCA PARA INICIAR</span>
-        </button>
-      )}
       {phase !== 'offline' && phase !== 'boot' && (
         <Hud data={data} lines={lines} interim={interim} phase={phase} error={error}
           onMic={toggleMic} onSend={send} canListen={canListen} />

@@ -114,19 +114,20 @@ function silentWav() {
   b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true)
   return URL.createObjectURL(new Blob([b.buffer], { type: 'audio/wav' }))
 }
-/** Call inside a tap/click: iOS and Chrome only allow audio that was unlocked by a gesture. */
+let unlocked = false
+let busy = false // a voice clip is loaded or playing: unlocking must not replace it
+/** Call inside a click or key press: Chrome and iOS only play audio after a gesture on the page. */
 export function unlockAudio() {
   try {
-    ctx ??= new AudioContext()
+    if (unlocked) { ctx?.resume(); return }
+    unlocked = true
+    ctx = new AudioContext()
     ctx.resume()
-    if (!analyser) {
-      analyser = ctx.createAnalyser()
-      analyser.fftSize = 512
-      ctx.createMediaElementSource(player).connect(analyser)
-      analyser.connect(ctx.destination)
-    }
-    player.src = silentWav()
-    player.play().catch(() => {})
+    analyser = ctx.createAnalyser()
+    analyser.fftSize = 512
+    ctx.createMediaElementSource(player).connect(analyser)
+    analyser.connect(ctx.destination)
+    if (!busy) { player.src = silentWav(); player.play().catch(() => {}) }
   } catch { /* old browsers: the system voice still works */ }
 }
 
@@ -134,20 +135,27 @@ function playBlob(blob: Blob): Promise<void> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob)
     const buf = new Uint8Array(512)
-    const done = () => { stopLevel(); URL.revokeObjectURL(url); resolve() }
+    busy = true
+    const done = () => { busy = false; stopLevel(); URL.revokeObjectURL(url); resolve() }
     player.onended = done
     player.onerror = done
     player.src = url
     progress = 0
     pumpLevel(() => {
       if (player.duration > 0) progress = player.currentTime / player.duration
-      if (!analyser) return 0.4 + 0.3 * Math.random()
+      if (!analyser || player.paused) return player.paused ? 0 : 0.4 + 0.3 * Math.random()
       analyser.getByteTimeDomainData(buf)
       let sum = 0
       for (const v of buf) sum += ((v - 128) / 128) ** 2
       return Math.min(1, Math.sqrt(sum / buf.length) * 5)
     })
-    player.play().catch(done)
+    player.play().catch((e) => {
+      // No click on the page yet (e.g. woken by voice right after loading): play on the first click or key.
+      if (e?.name !== 'NotAllowedError') return done()
+      const go = () => { removeEventListener('pointerdown', go, true); removeEventListener('keydown', go, true); unlockAudio(); player.play().catch(done) }
+      addEventListener('pointerdown', go, true)
+      addEventListener('keydown', go, true)
+    })
   })
 }
 
@@ -161,7 +169,7 @@ export function preload(text: string) {
 export async function speak(text: string, lang: 'es' | 'it' = 'es', cancel = true): Promise<void> {
   if (!text) return
   if (cancel) stopSpeaking()
-  const blob = await (prefetched.get(text) ?? getSpeech(text))
+  const blob = await (prefetched.get(text) ?? getSpeech(text, true)) // live replies: the low-latency model
   prefetched.delete(text)
   if (blob) return playBlob(blob)
   return speakSystem(text, lang, false)
