@@ -1,0 +1,2 @@
+{ "name": "J.A.R.V.I.S.", "short_name": "JARVIS", "start_url": "./", "scope": "./", "display": "standalone", "background_color": "#01060c", "theme_color": "#01060c",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }, { "src": "icon.png", "sizes": "512x512", "type": "image/png" }] }

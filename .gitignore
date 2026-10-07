@@ -1,0 +1,12 @@
+# runtime
+state.json
+*.log
+logs/
+node_modules/
+# personal: your own prompt, your deploy notes, your launchd plists
+system-prompt.md
+*.local.md
+deploy/mac/
+.env
+jarvis-ui/node_modules/
+jarvis-ui/dist/
