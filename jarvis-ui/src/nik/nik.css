@@ -228,3 +228,7 @@ body { -webkit-tap-highlight-color: transparent; }
   .nik-event { width: 100%; max-height: 78vh; }
   .nik-event h2 { font-size: 17px; }
 }
+
+/* Recording mode (R): amounts blurred; people, links and places are hidden in the event card. */
+.nik-rec .nik-amt, .nik-rec .nik-kpis dd, .nik-rec .nik-money { filter: blur(9px); }
+.nik-status em.nik-demo { color: var(--cy); }

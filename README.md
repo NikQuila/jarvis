@@ -15,7 +15,8 @@ Los dos usan el mismo cerebro, así que sabe lo mismo por los dos lados.
 
 Lo armé con Claude Code. Este repo tiene todo para que armes el tuyo.
 
-<!-- ![JARVIS](docs/jarvis.png) -->
+![JARVIS](docs/jarvis.jpg)
+<sub>El HUD en modo demo (`JARVIS_DEMO=1`), con datos inventados.</sub>
 
 ---
 
@@ -185,9 +186,19 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
 
 - **Paneles:** biometría de WHOOP (recovery, HRV, FC en reposo, sueño), revenue y MRR de RevenueCat y la agenda del
   día, con cuenta regresiva a lo próximo. Tocas un evento y ves su checklist, la gente y el link de la reunión.
-- **Voz:** micrófono y respuestas habladas con la Web Speech API (Chrome y Safari). En el Mac, la barra espaciadora es
-  para hablar. Arranca con un saludo en italiano.
-- **Para grabar:** `F` o el botón ⛶ lo deja en pantalla completa.
+- **Voz:** micrófono y respuestas habladas con la Web Speech API (Chrome y Safari). Arranca con un saludo en italiano
+  (lo cambias con `JARVIS_BOOT_LINES`).
+- **Música:** un *swell* al arrancar, un fondo bajo y un tema que sube mientras JARVIS trabaja. Son de Kevin MacLeod
+  (CC BY 4.0, ver `jarvis-ui/public/audio/CREDITS.md`); reemplaza cualquier MP3 por otro con el mismo nombre.
+- **Para grabar la pantalla:** `F` la deja en pantalla completa y `R` activa el **modo grabación**, que difumina los montos
+  y esconde los participantes, los links y los lugares de los eventos. También sirve abrirlo con `?rec=1`.
+
+| Tecla | Qué hace |
+|---|---|
+| `Espacio` | Hablar (en el Mac) |
+| `F` | Pantalla completa |
+| `R` | Modo grabación |
+| `M` | Silenciar la música |
 - **Código:** `jarvis-ui/` (Vite + React + three.js). El reactor 3D y la secuencia de arranque vienen de
   [adewaskar/jarvis](https://github.com/adewaskar/jarvis) (MIT, ver `jarvis-ui/LICENSE`). Los paneles, la voz y la
   conexión con el servidor están en `src/App.tsx` y `src/nik/`.
@@ -206,8 +217,36 @@ Caddy ya deja pasar `/jarvis` y `/jarvis/*` (es el matcher `@bridge` de `deploy/
 **Primera vez:** abre `https://<host>/jarvis/?k=<JARVIS_TOKEN>` y la clave queda guardada en el navegador. En el
 celular, "Agregar a pantalla de inicio" lo deja como app.
 
-**Para los paneles** (opcional): `REVENUECAT_API_KEY` + `REVENUECAT_PROJECT_ID` para el MRR, y WHOOP conectado
-(abajo) para la biometría. Sin eso, el HUD funciona igual y los paneles quedan vacíos.
+**Los paneles aparecen solo si conectas su fuente:** biometría con WHOOP (abajo) y revenue con `REVENUECAT_API_KEY` +
+`REVENUECAT_PROJECT_ID`. La agenda sale de Google Calendar. Sin nada conectado, el HUD funciona igual: queda el reactor,
+la agenda y la voz.
+
+**Pruébalo antes de conectar nada:** con `JARVIS_DEMO=1` el HUD muestra datos inventados (es como se sacó la captura de
+arriba).
+
+---
+
+## Hazlo tuyo
+
+Nada tuyo vive en el código. Lo personal está en dos lugares:
+
+1. **`system-prompt.md`**: quién eres, cómo te habla y una línea por cada herramienta que conectes. Es lo que hace que
+   JARVIS sepa qué puede tocar.
+2. **Variables en `kapso.env`** (todas opcionales):
+
+| Variable | Qué cambia | Ejemplo |
+|---|---|---|
+| `OWNER_NAME` | Cómo te llama | `Tony` |
+| `JARVIS_REVENUE_TITLE` | El título del panel de RevenueCat | `MI APP` |
+| `JARVIS_CALENDAR_LABELS` | El nombre de cada calendario, según el final del correo | `{"@gmail.com":"PERSONAL","@acme.com":"ACME"}` |
+| `JARVIS_BOOT_LINES` | Lo que dice al arrancar, mañana\|tarde. Vacío = nada | `Buongiorno.\|Buonasera.` |
+| `JARVIS_BOOT_LANG` | El idioma de esa frase | `it` o `es` |
+| `JARVIS_COMPANIES` | ARR a mano de empresas sin fuente en vivo | `[{"name":"Acme","arr":120000}]` |
+| `GREETING_READ` | Qué lee Claude de tu vault para escribirte los buenos días | `Me.md y la nota más reciente de Journal/` |
+| `GREETING_STYLE` | El tono de ese mensaje | `español casual, cálido y con energía` |
+| `JARVIS_DEMO` | Datos inventados en el HUD | `1` |
+
+Las demás (avisos, horarios, permisos) están en [`.env.example`](.env.example).
 
 ---
 
@@ -264,6 +303,8 @@ Todas las variables están en [`.env.example`](.env.example).
 ## Créditos
 
 - El reactor 3D y la secuencia de arranque del HUD: [adewaskar/jarvis](https://github.com/adewaskar/jarvis) (MIT).
+- Música: Kevin MacLeod ([incompetech.com](https://incompetech.com)), *Impact Prelude*, *Ossuary 6 – Air* y
+  *Mechanolith*, bajo [CC BY 4.0](http://creativecommons.org/licenses/by/4.0/).
 - WhatsApp por [Kapso](https://kapso.ai). El cerebro es [Claude Code](https://claude.com/claude-code).
 
 Licencia MIT ([`LICENSE`](LICENSE)). El HUD conserva la licencia MIT de adewaskar/jarvis ([`jarvis-ui/LICENSE`](jarvis-ui/LICENSE)).

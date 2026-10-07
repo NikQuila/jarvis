@@ -30,7 +30,7 @@ const cfg = {
   // full: everything except FORBIDDEN_TOOLS (dedicated server). allowlist: only ALLOWED_TOOLS (laptop).
   permissions: process.env.PERMISSIONS || 'allowlist',
   gitSync: process.env.GIT_SYNC === '1', // pull before each run, push after
-  // Extra repos Claude works in (e.g. NutrIA's knowledge). Reset to origin/main before every message:
+  // Extra repos Claude works in (e.g. a company knowledge repo). Reset to origin/main before every message:
   // Claude changes them on a branch + PR within the same run, so nothing local is meant to survive.
   mirrors: (process.env.MIRROR_REPOS || '').split(',').map((x) => x.trim()).filter(Boolean),
 };
@@ -297,14 +297,18 @@ const REMINDERS_ON = process.env.REMINDERS !== '0';
 
 // The morning greeting is written by Claude from the vault (yesterday's journal, goals, today's first block),
 // so it reads like a person and not a cron job. Falls back to a fixed line if Claude fails.
+// GREETING_READ: what Claude reads in the vault to write it. GREETING_STYLE: tone and language.
+const GREETING_READ = process.env.GREETING_READ ||
+  'el CLAUDE.md del vault (y lo que apunte), la nota de journal más reciente y la rutina, si existen';
+const GREETING_STYLE = process.env.GREETING_STYLE || 'español casual, cálido y con energía';
 async function morningGreeting(firstEvent) {
   const fallback = `☀️ *Buenos días${cfg.ownerName ? ` ${cfg.ownerName}` : ''}.* ¿Arriba? Respóndeme y te cuento cómo dormiste y qué tienes hoy.`;
   const weekday = new Intl.DateTimeFormat('es-CL', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
   const text = await runClaude(
     `Escribe el mensaje de buenos días de WhatsApp para ${cfg.ownerName || 'el dueño de este vault'}, hoy ${weekday}. ` +
-    `Lee Me.md, la entrada más reciente de Calendar/Journal/ y la rutina si existe (Efforts/Personal/Rutina.md). ` +
+    `Lee ${GREETING_READ}. ` +
     (firstEvent ? `Su primer bloque de hoy es "${firstEvent.title}" a las ${hhmm(firstEvent.start)}: menciónalo. ` : '') +
-    `2 o 3 líneas cortas, español chileno casual, cálido y con energía, específico: algo real de ayer o de hoy, nada genérico. ` +
+    `2 o 3 líneas cortas, ${GREETING_STYLE}, específico: algo real de ayer o de hoy, nada genérico. ` +
     `Sin listas ni títulos; solo *negrita* de WhatsApp si hace falta. Todavía no sabe cómo durmió: no inventes datos de sueño. ` +
     `Termina con una frase corta para que responda; cuando responda, TÚ le vas a mandar cómo durmió y su día (no se lo pidas a él). Devuelve solo el texto del mensaje.`,
     { model: 'sonnet', tools: ['Read', 'Glob', 'Grep'], cwd: cfg.vault },
@@ -429,9 +433,42 @@ function runChild(args) {
   });
 }
 
+// Everything the HUD shows that is specific to you comes from here, not from the UI code.
+let calendarLabels = {};
+try { calendarLabels = JSON.parse(process.env.JARVIS_CALENDAR_LABELS || '{}'); } catch { log('JARVIS_CALENDAR_LABELS is not valid JSON'); }
+const REVENUE_TITLE = process.env.JARVIS_REVENUE_TITLE || 'REVENUE';
+const jarvisUi = () => ({
+  bootLines: (process.env.JARVIS_BOOT_LINES ?? 'Buongiorno.|Buonasera.').split('|').map((x) => x.trim()),
+  bootLang: process.env.JARVIS_BOOT_LANG || 'it',
+  revenueTitle: REVENUE_TITLE,
+  calendarLabels,
+});
+
+// JARVIS_DEMO=1: made-up data, for screenshots and for trying the HUD before connecting anything.
+function demoState() {
+  const at = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.toISOString(); };
+  const ev = (h, m, h2, m2, title, extra = {}) => ({ time: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, start: at(h, m), end: at(h2, m2), title, description: '', calendar: 'demo@example.com', link: '', location: '', meet: '', attendees: [], ...extra });
+  return {
+    now: new Date().toISOString(), owner: cfg.ownerName || 'Tony', tz: TZ, ui: { ...jarvisUi(), revenueTitle: 'MI APP' }, demo: true,
+    agenda: [
+      ev(6, 30, 7, 30, '☀️ Rutina de la mañana', { description: '☐ Agua y luz\n☐ 30 min de cardio\n☐ Ducha fría' }),
+      ev(9, 0, 11, 0, '💻 Deep work: producto'),
+      ev(11, 30, 12, 0, '📞 Llamada con el equipo'),
+      ev(13, 30, 14, 30, '🍽️ Almuerzo'),
+      ev(15, 0, 17, 0, '🎬 Grabar contenido'),
+      ev(19, 0, 20, 0, '🏋️ Gym'),
+      ev(22, 30, 23, 0, '🌙 Cierre del día'),
+    ],
+    whoop: { recovery: 78, hrv: 84, rhr: 52, sleepHours: 7.4, sleepPerf: 91 },
+    revenue: { revenue28d: 12480, mrr: 9850, activeSubs: 1240, trials: 96, newCustomers28d: 310 },
+    companies: [],
+  };
+}
+
 async function jarvisState() {
+  if (process.env.JARVIS_DEMO === '1') return demoState();
   const date = todayStr();
-  const out = { now: new Date().toISOString(), owner: cfg.ownerName, tz: TZ };
+  const out = { now: new Date().toISOString(), owner: cfg.ownerName, tz: TZ, ui: jarvisUi() };
   const events = (state.agenda?.date === date ? state.agenda.events : [])
     .slice().sort((a, b) => new Date(a.start) - new Date(b.start));
   out.agenda = events.map((e) => ({
@@ -451,8 +488,8 @@ async function jarvisState() {
     try {
       const r = await fetch(`https://api.revenuecat.com/v2/projects/${process.env.REVENUECAT_PROJECT_ID}/metrics/overview`, { headers: { Authorization: `Bearer ${process.env.REVENUECAT_API_KEY}` } });
       const m = Object.fromEntries(((await r.json()).metrics || []).map((x) => [x.id, x.value]));
-      out.nutria = { revenue28d: m.revenue, mrr: m.mrr, activeSubs: m.active_subscriptions, trials: m.active_trials, newCustomers28d: m.new_customers };
-    } catch { out.nutria = null; }
+      out.revenue = { revenue28d: m.revenue, mrr: m.mrr, activeSubs: m.active_subscriptions, trials: m.active_trials, newCustomers28d: m.new_customers };
+    } catch { out.revenue = null; }
   }
   // ARR per company: live from RevenueCat (MRR × 12) when configured, hand-entered otherwise:
   // JARVIS_COMPANIES='[{"name":"…","arr":350000}]'.
@@ -460,7 +497,7 @@ async function jarvisState() {
   let manual = [];
   try { manual = JSON.parse(process.env.JARVIS_COMPANIES || '[]'); } catch {}
   out.companies = [
-    ...(out.nutria?.mrr != null ? [{ name: 'NutrIA', label: 'ARR · RevenueCat', value: k(out.nutria.mrr * 12) }] : []),
+    ...(out.revenue?.mrr != null ? [{ name: REVENUE_TITLE, label: 'ARR · RevenueCat', value: k(out.revenue.mrr * 12) }] : []),
     ...manual.map((c) => ({ name: c.name, label: c.label || 'ARR', value: c.value ?? k(c.arr) })),
   ];
   return out;

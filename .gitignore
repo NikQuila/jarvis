@@ -10,3 +10,4 @@ deploy/mac/
 .env
 jarvis-ui/node_modules/
 jarvis-ui/dist/
+/jarvis/

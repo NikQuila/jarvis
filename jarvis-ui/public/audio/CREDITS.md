@@ -35,7 +35,6 @@ references the track names. Other sources worth a look: incompetech.com (same
 licence), Pixabay Music (CC0, no attribution at all), and the YouTube Audio
 Library.
 
-The short interface sounds — wake pips, tool ticks, the completion chime — are
-not files. They're synthesised in Web Audio in `src/lib/sfx.ts`, so there's
-nothing to download and nothing to credit. Drop `wake.mp3`, `listen.mp3`,
-`tool.mp3`, `done.mp3` or `error.mp3` in here to override any of them.
+The code that plays them is `src/nik/music.ts`: the boot swell when you tap to
+start, the ambient bed after that, and the work track while JARVIS is thinking.
+Press M in the HUD to mute (remembered in the browser).

@@ -12,7 +12,10 @@ export type JarvisState = {
   agenda: AgendaItem[]
   whoop?: { recovery?: number; hrv?: number; rhr?: number; sleepHours?: number; sleepPerf?: number } | null
   companies?: { name: string; label: string; value: string; note?: string }[]
-  nutria?: { revenue28d?: number; mrr?: number; activeSubs?: number; trials?: number; newCustomers28d?: number } | null
+  revenue?: { revenue28d?: number; mrr?: number; activeSubs?: number; trials?: number; newCustomers28d?: number } | null
+  /** Personal bits (boot line, panel titles, calendar names), set with env vars on the server. */
+  ui?: { bootLines?: string[]; bootLang?: string; revenueTitle?: string; calendarLabels?: Record<string, string> }
+  demo?: boolean
 }
 
 const KEY = 'jarvis-key'

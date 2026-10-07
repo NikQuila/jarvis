@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgendaItem, JarvisState } from './api'
 import type { Phase } from '../store'
+import { music } from './music'
 
 export type Line = { who: 'user' | 'jarvis'; text: string }
 
@@ -85,8 +86,9 @@ function Agenda({ items, onOpen }: { items: JarvisState['agenda']; onOpen: (e: A
   )
 }
 
-const CALENDAR_LABEL = (c?: string) =>
-  !c ? '' : c.endsWith('@gmail.com') ? 'PERSONAL' : c.endsWith('@nutria.dev') ? 'NUTRIA' : c.endsWith('@heymark.ai') ? 'HEYMARK' : 'CALENDARIO'
+// JARVIS_CALENDAR_LABELS on the server: {"@gmail.com":"PERSONAL","@acme.com":"ACME"} (matched by suffix).
+const calendarLabel = (labels: Record<string, string> | undefined, c?: string) =>
+  !c ? '' : Object.entries(labels ?? {}).find(([suffix]) => c.endsWith(suffix))?.[1] ?? 'CALENDARIO'
 const hm = (iso?: string) => (iso ? new Date(iso).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false }) : '')
 const dur = (a: string, b?: string) => {
   if (!b) return ''
@@ -102,7 +104,7 @@ const linkify = (t: string) =>
   t.split(URL_RE).map((part, i) => (i % 2 ? <a key={i} href={part} target="_blank" rel="noreferrer">{part.replace(/^https?:\/\//, '').slice(0, 48)}</a> : part))
 
 /** The event's details over the HUD: checklist from the description, people, call link, and a jump to Google Calendar. */
-function EventCard({ e, onClose }: { e: AgendaItem; onClose: () => void }) {
+function EventCard({ e, onClose, labels, rec }: { e: AgendaItem; onClose: () => void; labels?: Record<string, string>; rec: boolean }) {
   useEffect(() => {
     const onKey = (k: KeyboardEvent) => { if (k.key === 'Escape') onClose() }
     addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey)
@@ -112,34 +114,37 @@ function EventCard({ e, onClose }: { e: AgendaItem; onClose: () => void }) {
   return (
     <div className="nik-modal" onClick={onClose}>
       <section className="nik-panel nik-event" onClick={(x) => x.stopPropagation()}>
-        <header>EVENTO <i>{CALENDAR_LABEL(e.calendar)}</i><button className="nik-x" onClick={onClose} aria-label="Cerrar">✕</button></header>
+        <header>EVENTO <i>{calendarLabel(labels, e.calendar)}</i><button className="nik-x" onClick={onClose} aria-label="Cerrar">✕</button></header>
         <h2>{e.title}</h2>
         <div className="nik-event-when">{hm(e.start)} → {hm(e.end)}<small>{dur(e.start, e.end)}</small></div>
-        {e.location && <p className="nik-event-meta"><b>LUGAR</b>{linkify(e.location)}</p>}
-        {!!e.attendees?.length && <p className="nik-event-meta"><b>CON</b>{e.attendees.join(' · ')}</p>}
+        {e.location && !rec && <p className="nik-event-meta"><b>LUGAR</b>{linkify(e.location)}</p>}
+        {!!e.attendees?.length && (rec
+          ? <p className="nik-event-meta"><b>CON</b>{e.attendees.length} {e.attendees.length === 1 ? 'PERSONA' : 'PERSONAS'}</p>
+          : <p className="nik-event-meta"><b>CON</b>{e.attendees.join(' · ')}</p>)}
         {lines.length > 0 && (
           <ul className="nik-event-desc">
             {lines.map((l, i) => {
               const box = /^(\d{1,2}:\d{2})?\s*(☐|☑|✅|- \[[ x]\])\s*/.exec(l)
-              if (!box) return <li key={i}>{linkify(l)}</li>
+              if (!box) return <li key={i}>{rec ? l.replace(URL_RE, '🔗') : linkify(l)}</li>
               return <li key={i} className="check">{box[1] && <time>{box[1]}</time>}<span>{linkify(l.slice(box[0].length))}</span></li>
             })}
           </ul>
         )}
         <div className="nik-event-actions">
-          {e.meet && <a className="primary" href={e.meet} target="_blank" rel="noreferrer">UNIRSE A LA LLAMADA</a>}
-          {url && <a href={url} target="_blank" rel="noreferrer">ABRIR EN CALENDAR ↗</a>}
+          {e.meet && !rec && <a className="primary" href={e.meet} target="_blank" rel="noreferrer">UNIRSE A LA LLAMADA</a>}
+          {url && !rec && <a href={url} target="_blank" rel="noreferrer">ABRIR EN CALENDAR ↗</a>}
         </div>
       </section>
     </div>
   )
 }
 
-function Nutria({ n }: { n: JarvisState['nutria'] }) {
+function Revenue({ n, title }: { n: JarvisState['revenue']; title?: string }) {
+  if (!n) return null
   return (
     <section className="nik-panel nik-kpis">
-      <header>NUTRIA <i>REVENUECAT</i></header>
-      <div className="nik-kpi-main">{fmtMoney(n?.revenue28d)}<small>REVENUE · ÚLTIMOS 28 DÍAS · USD</small></div>
+      <header>{(title || 'REVENUE').toUpperCase()} <i>REVENUECAT</i></header>
+      <div className="nik-kpi-main"><span className="nik-amt">{fmtMoney(n?.revenue28d)}</span><small>REVENUE · ÚLTIMOS 28 DÍAS · USD</small></div>
       <dl>
         <div><dt>MRR</dt><dd>{fmtMoney(n?.mrr)}</dd></div>
         <div><dt>SUSCRIPTORES</dt><dd>{n?.activeSubs?.toLocaleString('es-CL') ?? '--'}</dd></div>
@@ -149,7 +154,7 @@ function Nutria({ n }: { n: JarvisState['nutria'] }) {
   )
 }
 
-// Other companies' numbers are kept out of the HUD on purpose (only NutrIA is shown).
+// Not rendered by default: ARR per company (RevenueCat + JARVIS_COMPANIES). Drop <Companies list={...} /> in to show it.
 export function Companies({ list }: { list: NonNullable<JarvisState['companies']> }) {
   if (!list.length) return null
   return (
@@ -171,28 +176,43 @@ export function Hud(p: {
   const [text, setText] = useState('')
   const [sheet, setSheet] = useState(false)
   const [open, setOpen] = useState<AgendaItem | null>(null)
+  // Recording mode (R or ?rec=1): hides who you meet with, links and amounts, so you can film the screen.
+  const [rec, setRec] = useState(() => new URLSearchParams(location.search).has('rec'))
+  const [muted, setMuted] = useState(music.muted)
+  useEffect(() => {
+    const onKey = (k: KeyboardEvent) => {
+      if ((k.target as HTMLElement)?.tagName === 'INPUT') return
+      if (k.code === 'KeyR') setRec((r) => !r)
+      if (k.code === 'KeyM') setMuted(music.toggle())
+    }
+    addEventListener('keydown', onKey); return () => removeEventListener('keydown', onKey)
+  }, [])
   const last = p.lines.slice(-3)
+  const ui = p.data?.ui
   return (
-    <div className={`nik-hud nik-phase-${p.phase}`}>
+    <div className={`nik-hud nik-phase-${p.phase} ${rec ? 'nik-rec' : ''}`}>
       <div className="nik-top">
         <div className="nik-brand">J.A.R.V.I.S.</div>
-        <div className="nik-status"><b />{PHASE_LABEL[p.phase] ?? ''}{p.error && <em> · {p.error}</em>}</div>
+        <div className="nik-status"><b />{PHASE_LABEL[p.phase] ?? ''}{p.data?.demo && <em className="nik-demo"> · DEMO</em>}{rec && <em className="nik-rec-dot"> · ● REC</em>}{p.error && <em> · {p.error}</em>}</div>
         <div className="nik-topright">
+          <button className="nik-fs" title="Música (M)" onClick={() => setMuted(music.toggle())}>{muted ? '♪̸' : '♪'}</button>
           <button className="nik-fs" title="Pantalla completa (F)" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())}>⛶</button>
           <Clock />
         </div>
       </div>
 
       <div className="nik-chips">
-        <span className={`nik-zone-${zone(p.data?.whoop?.recovery)}`}>REC {p.data?.whoop?.recovery ?? '--'}%</span>
-        <span>SUEÑO {p.data?.whoop?.sleepHours ?? '--'}h</span>
-        <span>REV 28D {fmtMoney(p.data?.nutria?.revenue28d)}</span>
+        {p.data?.whoop !== undefined && <>
+          <span className={`nik-zone-${zone(p.data.whoop?.recovery)}`}>REC {p.data.whoop?.recovery ?? '--'}%</span>
+          <span>SUEÑO {p.data.whoop?.sleepHours ?? '--'}h</span>
+        </>}
+        {p.data?.revenue && <span className="nik-money">REV 28D {fmtMoney(p.data.revenue.revenue28d)}</span>}
         <button onClick={() => setSheet((s) => !s)}>{sheet ? 'CERRAR' : 'AGENDA'}</button>
       </div>
 
-      <aside className="nik-left"><Bio w={p.data?.whoop} /><Nutria n={p.data?.nutria} /></aside>
+      <aside className="nik-left">{p.data?.whoop !== undefined && <Bio w={p.data.whoop} />}<Revenue n={p.data?.revenue} title={ui?.revenueTitle} /></aside>
       <aside className={`nik-right ${sheet ? 'open' : ''}`}><Agenda items={p.data?.agenda ?? []} onOpen={setOpen} /></aside>
-      {open && <EventCard e={open} onClose={() => setOpen(null)} />}
+      {open && <EventCard e={open} onClose={() => setOpen(null)} labels={ui?.calendarLabels} rec={rec} />}
 
       <div className="nik-subs">
         {last.map((l, i) => (

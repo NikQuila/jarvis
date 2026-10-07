@@ -5,13 +5,15 @@ import { useStore } from './store'
 import { Hud, type Line } from './nik/Hud'
 import { ask, getState, initKey, setKey, type JarvisState } from './nik/api'
 import { canListen, listen, speak, stopSpeaking } from './nik/voice'
+import { music } from './nik/music'
 import './nik/nik.css'
 
 const BOOT_MS = 6400
 
-/** The boot line, in Italian on purpose. */
-function bootLine() {
-  return new Date().getHours() < 13 ? 'Buon fucking giorno, figli di puttana!' : 'Buona fucking sera, figli di puttana!'
+/** The boot line: JARVIS_BOOT_LINES="morning|evening" on the server (Italian by default). Empty = no boot line. */
+function bootLine(s: JarvisState | null) {
+  const [morning = '', evening = morning] = s?.ui?.bootLines ?? ['Buongiorno.', 'Buonasera.']
+  return new Date().getHours() < 13 ? morning : evening
 }
 
 function greetingFor(s: JarvisState | null, owner: string) {
@@ -45,6 +47,9 @@ export default function App() {
     if (new URLSearchParams(location.search).has('skip')) setPhase('dormant')
   }, [setPhase])
 
+  // The work track rises while Jarvis is thinking or running a tool.
+  useEffect(() => { music.work(phase === 'thinking' || phase === 'tooling') }, [phase])
+
   useEffect(() => {
     if (!key) return
     refresh()
@@ -62,14 +67,18 @@ export default function App() {
   const power = useCallback(() => {
     // The tap unlocks audio on iOS: speak something silent right away.
     speechSynthesis.speak(new SpeechSynthesisUtterance(' '))
+    music.boot()
     setPhase('boot')
     setTimeout(async () => {
       setPhase('dormant')
-      const line = bootLine()
-      setLines((l) => [...l.slice(-6), { who: 'jarvis', text: line }])
-      setPhase('speaking')
-      await speak(line, 'it')
-      await say(greetingFor(dataRef.current, dataRef.current?.owner || 'Nik'))
+      music.ambient(true)
+      const line = bootLine(dataRef.current)
+      if (line) {
+        setLines((l) => [...l.slice(-6), { who: 'jarvis', text: line }])
+        setPhase('speaking')
+        await speak(line, dataRef.current?.ui?.bootLang === 'es' ? 'es' : 'it')
+      }
+      await say(greetingFor(dataRef.current, dataRef.current?.owner || 'jefe'))
     }, BOOT_MS)
   }, [setPhase, say])
 
