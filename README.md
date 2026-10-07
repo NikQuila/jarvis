@@ -300,6 +300,11 @@ Todas las variables están en [`.env.example`](.env.example).
 
 ---
 
+## Contribuir
+
+**Se aceptan PRs de cualquier cosa:** integraciones nuevas, paneles, arreglos, traducciones, mejoras al README. Si lo
+armaste y algo no se entendía, eso también es un PR.
+
 ## Créditos
 
 - El reactor 3D y la secuencia de arranque del HUD: [adewaskar/jarvis](https://github.com/adewaskar/jarvis) (MIT).
