@@ -254,6 +254,7 @@ function refreshAgenda() {
       const events = JSON.parse(json).filter((e) => e.start && e.title);
       const prev = state.agenda?.date === date ? state.agenda : { notified: {} };
       state.agenda = { date, events, notified: prev.notified, digestSent: prev.digestSent, fetchedAt: Date.now() };
+      briefingCache.at = 0; // the spoken briefing reads the agenda
       saveState();
       log(`agenda: ${events.length} events for ${date}`);
     } catch { log('agenda parse failed:', out.slice(0, 300)); }
@@ -438,8 +439,7 @@ let calendarLabels = {};
 try { calendarLabels = JSON.parse(process.env.JARVIS_CALENDAR_LABELS || '{}'); } catch { log('JARVIS_CALENDAR_LABELS is not valid JSON'); }
 const REVENUE_TITLE = process.env.JARVIS_REVENUE_TITLE || 'REVENUE';
 const jarvisUi = () => ({
-  bootLines: (process.env.JARVIS_BOOT_LINES ?? 'Buongiorno.|Buonasera.').split('|').map((x) => x.trim()),
-  bootLang: process.env.JARVIS_BOOT_LANG || 'it',
+  wakeLine: process.env.JARVIS_WAKE_LINE || 'Buongiorno, JARVIS. ¿Cómo se viene el día?',
   revenueTitle: REVENUE_TITLE,
   calendarLabels,
 });
@@ -511,12 +511,162 @@ function serveJarvisStatic(url, res) {
   fs.createReadStream(file).pipe(res);
 }
 
+// Optional: your app's day so far, if you store RevenueCat webhooks in a Supabase table `rc_events`
+// (RC_EVENTS_SUPABASE_REF + SUPABASE_ACCESS_TOKEN; read-only SQL, aggregates only).
+async function revenueDays() {
+  if (!process.env.SUPABASE_ACCESS_TOKEN || !process.env.RC_EVENTS_SUPABASE_REF) return null;
+  const sql = `with d as (select type, period_type, is_trial_conversion, price,
+      (to_timestamp(event_timestamp_ms / 1000.0) at time zone '${TZ}')::date as dia
+    from rc_events where environment = 'PRODUCTION' and event_timestamp_ms > extract(epoch from now() - interval '9 days') * 1000)
+    select dia::text,
+      count(*) filter (where (type = 'INITIAL_PURCHASE' and period_type <> 'TRIAL') or (type = 'RENEWAL' and is_trial_conversion)) as nuevos,
+      count(*) filter (where type = 'INITIAL_PURCHASE' and period_type = 'TRIAL') as trials,
+      round(coalesce(sum(price) filter (where type in ('INITIAL_PURCHASE', 'RENEWAL', 'NON_RENEWING_PURCHASE')), 0)) as revenue
+    from d group by 1 order by 1 desc`;
+  const r = await fetch(`https://api.supabase.com/v1/projects/${process.env.RC_EVENTS_SUPABASE_REF}/database/query/read-only`, {
+    method: 'POST', headers: { Authorization: `Bearer ${process.env.SUPABASE_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: sql }),
+  });
+  if (!r.ok) return null;
+  const rows = (await r.json()).map((x) => ({ dia: x.dia, suscriptoresNuevos: Number(x.nuevos), trialsNuevos: Number(x.trials), revenueUsd: Number(x.revenue) }));
+  const today = todayStr();
+  const past = rows.filter((x) => x.dia < today).slice(0, 7);
+  const avg = (k) => Math.round(past.reduce((t, x) => t + x[k], 0) / Math.max(1, past.length));
+  return {
+    hoyHastaAhora: rows.find((x) => x.dia === today) || { suscriptoresNuevos: 0, trialsNuevos: 0, revenueUsd: 0 },
+    ayer: past[0] || null,
+    promedioDiarioUltimos7: { suscriptoresNuevos: avg('suscriptoresNuevos'), revenueUsd: avg('revenueUsd') },
+  };
+}
+
+// The briefing JARVIS says when you wake him ("¿cómo se viene el día?"): written by Claude from the HUD's own data,
+// no tools, so it takes ~20-30 s. The HUD asks for it when the page opens, so it's ready when you say the wake line.
+const CALL_ME = process.env.JARVIS_CALL_ME || cfg.ownerName || '';
+const BRIEFING_STYLE = process.env.JARVIS_BRIEFING_STYLE ||
+  'español con tuteo (nada de voseo), sin garabatos, con MUCHA energía: hype, rápido, como un relator que anuncia buenas noticias, ' +
+  'pero con el estilo de JARVIS (lo trata de "señor", un toque de ironía). Frases cortas y con punch, exclamaciones donde corresponda';
+// Only your app's numbers are said out loud by default; other companies' ARR stays private unless this is set.
+const BRIEFING_COMPANY_NUMBERS = process.env.JARVIS_BRIEFING_COMPANY_NUMBERS === '1';
+const briefingCache = { at: 0, text: '', pending: null };
+function briefingFallback(s) {
+  const parts = [`¡Buongiorno${CALL_ME ? `, ${CALL_ME}` : ''}!`];
+  const w = s.whoop;
+  if (w?.sleepHours != null) parts.push(`Dormiste ${String(w.sleepHours).replace('.', ',')} horas${w.recovery != null ? ` y tu recuperación está en ${Math.round(w.recovery)} por ciento` : ''}.`);
+  if (s.revenue?.mrr != null) parts.push(`${s.ui?.revenueTitle || 'Tu app'} va en ${Math.round(s.revenue.mrr).toLocaleString('es-CL')} dólares de MRR.`);
+  const left = s.agenda.filter((e) => new Date(e.end || e.start) > Date.now());
+  if (left.length) parts.push(`Lo próximo: ${left[0].title.replace(/[^\p{L}\p{N}\s:,.()-]/gu, '').trim()}, a las ${left[0].time}.`);
+  return parts.join(' ');
+}
+async function jarvisBriefing() {
+  if (briefingCache.pending) return briefingCache.pending;
+  if (Date.now() - briefingCache.at < 5 * 60_000 && briefingCache.text) return briefingCache.text;
+  briefingCache.pending = (async () => {
+    const s = await jarvisState();
+    const now = Date.now();
+    const app = s.ui?.revenueTitle && s.ui.revenueTitle !== 'REVENUE' ? s.ui.revenueTitle : 'tu app';
+    const data = {
+      ahora: new Date().toLocaleString('es-CL', { timeZone: TZ, weekday: 'long', hour: '2-digit', minute: '2-digit' }),
+      whoop: s.whoop,
+      app: s.revenue && { nombre: app, mrrUsd: s.revenue.mrr, revenueUltimos28diasUsd: s.revenue.revenue28d, suscriptoresActivos: s.revenue.activeSubs, trialsActivos: s.revenue.trials, ...(s.demo ? {} : await revenueDays().catch(() => null)) },
+      otrasEmpresas: BRIEFING_COMPANY_NUMBERS ? s.companies?.filter((c) => c.name !== REVENUE_TITLE) : undefined,
+      agenda: s.agenda.map((e) => ({ hora: e.time, fin: e.end ? hhmm(e.end) : '', titulo: e.title, yaPaso: new Date(e.end || e.start) < now })),
+    };
+    const out = await runClaude(
+      `Eres J.A.R.V.I.S., el asistente de ${CALL_ME || 'tu dueño'}. Te acaba de decir "${s.ui?.wakeLine || '¿Cómo se viene el día?'}". ` +
+      `Contéstale en voz alta. Estilo: ${BRIEFING_STYLE}. ` +
+      `Empieza exactamente con "¡Buongiorno, ${CALL_ME || 'señor'}!" y después, en este orden, saltándote lo que no venga en los datos: ` +
+      `1) cómo durmió y su recuperación (WHOOP), en una frase; si la recuperación es baja, igual con buena onda pero que baje la intensidad. ` +
+      `2) la app (${app}), celebrándolo si va bien ("¡${app} la está rompiendo!"): los suscriptores nuevos de hoy si vienen (hoyHastaAhora; si son menos de 5, los de ayer), comparados con su promedio diario si le gana, y el total de suscriptores activos o el MRR. Cifras redondeadas como se dicen ("veintiocho suscriptores nuevos"). Si los números no son buenos, no inventes hype: dilo con calma. ` +
+      `3) cómo vienen los proyectos hoy` +
+      (BRIEFING_COMPANY_NUMBERS ? ' (con las cifras de otrasEmpresas)' : ' según los bloques de la agenda, sin cifras de otras empresas') +
+      ` y lo que queda de la agenda (solo lo que no ha pasado; agrupa, no leas todo). 4) Cierra con una frase corta con energía. ` +
+      `No nombres clientes, empresas externas ni personas (puede ir a un video): di "una reunión", no con quién. ` +
+      `Máximo 6 oraciones cortas y 65 palabras en total. Solo texto para decir en voz alta: sin markdown, sin emojis, sin listas, horas como "a las cuatro". ` +
+      `Datos (JSON): ${JSON.stringify(data)}`,
+      { model: 'sonnet', tools: ['Read'], cwd: DIR },
+    );
+    const text = out.startsWith('⚠️') || out.length < 20 ? briefingFallback(s) : out.trim();
+    Object.assign(briefingCache, { at: Date.now(), text });
+    return text;
+  })().finally(() => { briefingCache.pending = null; });
+  return briefingCache.pending;
+}
+
+// A natural voice for the HUD (the keys never reach the browser). ElevenLabs if configured (best, paid), else
+// Microsoft's neural voices through edge-tts (free), else 501 and the HUD falls back to the browser's voice.
+const ELEVEN = {
+  key: process.env.ELEVENLABS_API_KEY || '',
+  voice: process.env.ELEVENLABS_VOICE_ID || '',
+  model: process.env.ELEVENLABS_MODEL || 'eleven_v4',
+};
+const EDGE = {
+  voice: process.env.EDGE_TTS_VOICE || '',
+  rate: process.env.EDGE_TTS_RATE || '+10%',
+  pitch: process.env.EDGE_TTS_PITCH || '+0Hz',
+  bin: process.env.EDGE_TTS_BIN || path.join(os.homedir(), '.local/bin/edge-tts'),
+};
+const ttsReady = () => (ELEVEN.key && ELEVEN.voice) || EDGE.voice;
+function edgeTts(text) {
+  return new Promise((resolve, reject) => {
+    const file = path.join(os.tmpdir(), `jarvis-tts-${crypto.randomUUID()}.mp3`);
+    const child = spawn(EDGE.bin, ['--voice', EDGE.voice, `--rate=${EDGE.rate}`, `--pitch=${EDGE.pitch}`, '--text', text, '--write-media', file], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', (d) => (err += d));
+    const t = setTimeout(() => child.kill(), 30_000);
+    child.on('close', (code) => {
+      clearTimeout(t);
+      try { if (code !== 0) throw new Error(`edge-tts ${code} ${err.slice(0, 200)}`); resolve(fs.readFileSync(file)); }
+      catch (e) { reject(e); } finally { fs.rmSync(file, { force: true }); }
+    });
+  });
+}
+async function elevenTts(text) {
+  const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVEN.voice}?output_format=mp3_44100_128`, {
+    method: 'POST',
+    headers: { 'xi-api-key': ELEVEN.key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+    body: JSON.stringify({ text, model_id: ELEVEN.model, voice_settings: { stability: 0.35, similarity_boost: 0.8, style: 0.5, use_speaker_boost: true } }),
+  });
+  if (!r.ok) throw new Error(`elevenlabs ${r.status} ${(await r.text()).slice(0, 200)}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+const ttsCache = new Map(); // text → mp3, last 30: retakes of the same briefing don't spend credits
+async function tts(text) {
+  if (ttsCache.has(text)) return ttsCache.get(text);
+  const buf = ELEVEN.key && ELEVEN.voice ? await elevenTts(text) : await edgeTts(text);
+  ttsCache.set(text, buf);
+  if (ttsCache.size > 30) ttsCache.delete(ttsCache.keys().next().value);
+  return buf;
+}
+
+function readJson(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks))); } catch { resolve({}); } });
+  });
+}
+
 function handleJarvis(req, res, url) {
   if (!url.pathname.startsWith('/jarvis/api/')) return serveJarvisStatic(url, res);
   if (!jarvisAuthed(req, url)) { res.writeHead(401).end('unauthorized'); return; }
   if (req.method === 'GET' && url.pathname === '/jarvis/api/state') {
     jarvisState().then((s) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(s)))
       .catch((e) => { log('jarvis state error', e); res.writeHead(500).end('{}'); });
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === '/jarvis/api/briefing') {
+    jarvisBriefing().then((text) => res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text })))
+      .catch((e) => { log('jarvis briefing error', e); res.writeHead(500).end('{}'); });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/jarvis/api/tts') {
+    if (!ttsReady()) { res.writeHead(501).end('no tts'); return; }
+    readJson(req).then(async ({ text }) => {
+      text = String(text || '').slice(0, 1500).trim();
+      if (!text) { res.writeHead(400).end(); return; }
+      const mp3 = await tts(text);
+      res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': mp3.length, 'Cache-Control': 'no-store' }).end(mp3);
+    }).catch((e) => { log('tts error', e.message); res.writeHead(502).end('tts failed'); });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/jarvis/api/ask') {

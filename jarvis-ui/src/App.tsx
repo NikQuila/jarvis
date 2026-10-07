@@ -3,27 +3,16 @@ import { Scene } from './scene/Scene'
 import { Boot } from './ui/Boot'
 import { useStore } from './store'
 import { Hud, type Line } from './nik/Hud'
-import { ask, getState, initKey, setKey, type JarvisState } from './nik/api'
-import { canListen, listen, speak, stopSpeaking } from './nik/voice'
+import { ask, getBriefing, getState, initKey, setKey, type JarvisState } from './nik/api'
+import { canListen, listen, listenFor, preload, speak, stopSpeaking, unlockAudio } from './nik/voice'
 import { music } from './nik/music'
 import './nik/nik.css'
 
 const BOOT_MS = 6400
 
-/** The boot line: JARVIS_BOOT_LINES="morning|evening" on the server (Italian by default). Empty = no boot line. */
-function bootLine(s: JarvisState | null) {
-  const [morning = '', evening = morning] = s?.ui?.bootLines ?? ['Buongiorno.', 'Buonasera.']
-  return new Date().getHours() < 13 ? morning : evening
-}
-
-function greetingFor(s: JarvisState | null, owner: string) {
-  const parts = [`Todos los sistemas en línea, ${owner}.`]
-  const w = s?.whoop
-  if (w?.recovery != null) parts.push(`Recovery al ${Math.round(w.recovery)} por ciento${w.sleepHours ? `, dormiste ${String(w.sleepHours).replace('.', ',')} horas` : ''}.`)
-  const next = s?.agenda.find((e) => new Date(e.start).getTime() > Date.now() - 10 * 60_000)
-  if (next) parts.push(`Lo próximo: ${next.title.replace(/[^\p{L}\p{N}\s:,.()-]/gu, '').trim()}, a las ${next.time}.`)
-  return parts.join(' ')
-}
+// The wake line (JARVIS_WAKE_LINE on the server). You say it; JARVIS powers up and answers with the day's briefing.
+// Matching is loose on purpose: speech recognition hears "buongiorno" as anything from "bon" to "yorno".
+const WAKE = /giorno|yorno|jorno|journo|\bbu?on\b|jarvis|yarvis|despierta|c[oó]mo se viene/i
 
 export default function App() {
   const phase = useStore((s) => s.phase)
@@ -36,6 +25,9 @@ export default function App() {
   const stopRef = useRef<(() => void) | null>(null)
   const dataRef = useRef<JarvisState | null>(null)
   dataRef.current = data
+  const [standby, setStandby] = useState(false)
+  const briefing = useRef<Promise<string> | null>(null)
+  const stopWake = useRef<(() => void) | null>(null)
 
   const refresh = useCallback(() => {
     getState().then((s) => { setData(s); setError(null) })
@@ -64,23 +56,40 @@ export default function App() {
     setPhase('dormant')
   }, [setPhase])
 
+  // The briefing takes ~20-30 s to write (and to voice), so it starts as soon as the page opens, before the tap.
+  useEffect(() => {
+    if (!key || briefing.current) return
+    briefing.current = getBriefing().then(({ text }) => { preload(text); return text })
+      .catch(() => 'Buongiorno. Todos los sistemas en línea, pero no pude armar el reporte del día.')
+  }, [key])
+
+  // First tap: unlock audio and the mic, then wait in the dark for the wake line.
   const power = useCallback(() => {
-    // The tap unlocks audio on iOS: speak something silent right away.
+    unlockAudio()
     speechSynthesis.speak(new SpeechSynthesisUtterance(' '))
+    setStandby(true)
+  }, [])
+
+  // The wake line (or a tap / Space as a fallback): the reactor boots, then the briefing.
+  const wake = useCallback(() => {
+    stopWake.current?.()
+    stopWake.current = null
+    setStandby(false)
+    setLines([{ who: 'user', text: dataRef.current?.ui?.wakeLine || 'Buongiorno, JARVIS. ¿Cómo se viene el día?' }])
     music.boot()
     setPhase('boot')
     setTimeout(async () => {
       setPhase('dormant')
       music.ambient(true)
-      const line = bootLine(dataRef.current)
-      if (line) {
-        setLines((l) => [...l.slice(-6), { who: 'jarvis', text: line }])
-        setPhase('speaking')
-        await speak(line, dataRef.current?.ui?.bootLang === 'es' ? 'es' : 'it')
-      }
-      await say(greetingFor(dataRef.current, dataRef.current?.owner || 'jefe'))
+      await say(await (briefing.current ?? Promise.resolve('Buongiorno.')))
     }, BOOT_MS)
   }, [setPhase, say])
+
+  useEffect(() => {
+    if (!standby) return
+    stopWake.current = listenFor(WAKE, wake)
+    return () => { stopWake.current?.(); stopWake.current = null }
+  }, [standby, wake])
 
   const send = useCallback(async (text: string) => {
     text = text.trim()
@@ -122,6 +131,7 @@ export default function App() {
         else document.documentElement.requestFullscreen?.()
         return
       }
+      if (e.code === 'Space' && standby) { e.preventDefault(); wake(); return }
       if (e.code === 'Space' && (e.target as HTMLElement)?.tagName !== 'INPUT' && phase !== 'offline' && phase !== 'boot') {
         e.preventDefault()
         toggleMic()
@@ -129,7 +139,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [toggleMic, phase])
+  }, [toggleMic, phase, standby, wake])
 
   if (!key) {
     return (
@@ -147,7 +157,10 @@ export default function App() {
       <Scene />
       <div className="nik-grid" />
       <Boot />
-      {phase === 'offline' && (
+      {phase === 'offline' && standby && (
+        <button className="nik-standby" onClick={wake} aria-label="Despertar a JARVIS"><i /></button>
+      )}
+      {phase === 'offline' && !standby && (
         <button className="nik-power" onClick={power}>
           <span className="nik-brand">J.A.R.V.I.S.</span>
           <span className="nik-power-hint">TOCA PARA INICIAR</span>

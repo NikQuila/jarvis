@@ -1,5 +1,6 @@
 // Spanish voice in and out with the browser's own engines (Web Speech API), plus a level signal for the reactor.
 import { useStore } from '../store'
+import { getSpeech } from './api'
 
 type SR = {
   lang: string; interimResults: boolean; continuous: boolean
@@ -12,6 +13,9 @@ export const canListen = !!Recognition
 const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
 
 let level = 0
+// How far through the current utterance we are (0..1), for subtitles that follow the voice.
+let progress = 0
+export const speechProgress = () => progress
 let levelTimer: number | null = null
 function pumpLevel(fn: () => number) {
   stopLevel()
@@ -84,8 +88,9 @@ let italian: SpeechSynthesisVoice | null = null
 function pickVoice() {
   const voices = speechSynthesis.getVoices()
   const all = voices.filter((v) => v.lang.toLowerCase().startsWith('es'))
+  // macOS "Premium"/"Enhanced" voices (System Settings → Accessibility → Spoken Content) sound far less robotic.
   const rank = (v: SpeechSynthesisVoice) =>
-    (/google/i.test(v.name) ? 3 : 0) + (/(jorge|diego|juan|andr[eé]s|enrique|pablo)/i.test(v.name) ? 2 : 0) +
+    (/premium|enhanced|mejorada/i.test(v.name) ? 6 : 0) + (/google/i.test(v.name) ? 3 : 0) + (/(jorge|diego|juan|andr[eé]s|enrique|pablo)/i.test(v.name) ? 2 : 0) +
     (/es-(cl|mx|us|419)/i.test(v.lang) ? 1 : 0) + (v.localService ? 0 : 1)
   voice = all.sort((a, b) => rank(b) - rank(a))[0] ?? null
   // A male Italian voice for the boot line, if the system has one (macOS: Luca; Chrome: Google italiano).
@@ -97,8 +102,73 @@ if ('speechSynthesis' in window) {
   speechSynthesis.onvoiceschanged = pickVoice
 }
 
-/** Speaks and drives the reactor with a speech-like envelope (the browser doesn't expose TTS audio). */
-export function speak(text: string, lang: 'es' | 'it' = 'es', cancel = true): Promise<void> {
+// ---- natural voice (ElevenLabs through the server), with the real audio level driving the reactor ----
+let ctx: AudioContext | null = null
+const player = new Audio()
+let analyser: AnalyserNode | null = null
+function silentWav() {
+  const n = 800, b = new DataView(new ArrayBuffer(44 + n * 2))
+  const w = (o: number, t: string) => [...t].forEach((c, i) => b.setUint8(o + i, c.charCodeAt(0)))
+  w(0, 'RIFF'); b.setUint32(4, 36 + n * 2, true); w(8, 'WAVEfmt '); b.setUint32(16, 16, true); b.setUint16(20, 1, true)
+  b.setUint16(22, 1, true); b.setUint32(24, 8000, true); b.setUint32(28, 16000, true); b.setUint16(32, 2, true)
+  b.setUint16(34, 16, true); w(36, 'data'); b.setUint32(40, n * 2, true)
+  return URL.createObjectURL(new Blob([b.buffer], { type: 'audio/wav' }))
+}
+/** Call inside a tap/click: iOS and Chrome only allow audio that was unlocked by a gesture. */
+export function unlockAudio() {
+  try {
+    ctx ??= new AudioContext()
+    ctx.resume()
+    if (!analyser) {
+      analyser = ctx.createAnalyser()
+      analyser.fftSize = 512
+      ctx.createMediaElementSource(player).connect(analyser)
+      analyser.connect(ctx.destination)
+    }
+    player.src = silentWav()
+    player.play().catch(() => {})
+  } catch { /* old browsers: the system voice still works */ }
+}
+
+function playBlob(blob: Blob): Promise<void> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob)
+    const buf = new Uint8Array(512)
+    const done = () => { stopLevel(); URL.revokeObjectURL(url); resolve() }
+    player.onended = done
+    player.onerror = done
+    player.src = url
+    progress = 0
+    pumpLevel(() => {
+      if (player.duration > 0) progress = player.currentTime / player.duration
+      if (!analyser) return 0.4 + 0.3 * Math.random()
+      analyser.getByteTimeDomainData(buf)
+      let sum = 0
+      for (const v of buf) sum += ((v - 128) / 128) ** 2
+      return Math.min(1, Math.sqrt(sum / buf.length) * 5)
+    })
+    player.play().catch(done)
+  })
+}
+
+const prefetched = new Map<string, Promise<Blob | null>>()
+/** Starts generating the audio now so it plays instantly later. */
+export function preload(text: string) {
+  if (!prefetched.has(text)) prefetched.set(text, getSpeech(text))
+}
+
+/** Speaks with the natural voice when the server has one, otherwise with the system voice. */
+export async function speak(text: string, lang: 'es' | 'it' = 'es', cancel = true): Promise<void> {
+  if (!text) return
+  if (cancel) stopSpeaking()
+  const blob = await (prefetched.get(text) ?? getSpeech(text))
+  prefetched.delete(text)
+  if (blob) return playBlob(blob)
+  return speakSystem(text, lang, false)
+}
+
+/** System voice (Web Speech API), with a speech-like envelope since the browser doesn't expose that audio. */
+function speakSystem(text: string, lang: 'es' | 'it' = 'es', cancel = true): Promise<void> {
   return new Promise((resolve) => {
     if (!('speechSynthesis' in window) || !text) return resolve()
     if (cancel) speechSynthesis.cancel()
@@ -108,8 +178,13 @@ export function speak(text: string, lang: 'es' | 'it' = 'es', cancel = true): Pr
     u.lang = v?.lang ?? (lang === 'it' ? 'it-IT' : 'es-CL')
     u.rate = lang === 'it' ? 1.08 : 1.03
     u.pitch = lang === 'it' ? 1.0 : 0.92
+    // Chrome reports word boundaries for most voices; otherwise estimate from time (~14 chars/s).
+    const began = Date.now()
+    let byBoundary = false
+    progress = 0
+    u.onboundary = (e) => { byBoundary = true; progress = e.charIndex / text.length }
     let t = 0
-    pumpLevel(() => { t += 1; return 0.35 + 0.35 * Math.abs(Math.sin(t * 0.55)) * Math.random() + 0.15 * Math.random() })
+    pumpLevel(() => { if (!byBoundary) progress = Math.min(1, (Date.now() - began) / (text.length * 70)); t += 1; return 0.35 + 0.35 * Math.abs(Math.sin(t * 0.55)) * Math.random() + 0.15 * Math.random() })
     const end = () => { stopLevel(); resolve() }
     u.onend = end
     u.onerror = end
@@ -118,4 +193,28 @@ export function speak(text: string, lang: 'es' | 'it' = 'es', cancel = true): Pr
     setTimeout(() => { if (!speechSynthesis.speaking) end() }, Math.max(4000, text.length * 90))
   })
 }
-export const stopSpeaking = () => { speechSynthesis.cancel(); stopLevel() }
+export const stopSpeaking = () => { speechSynthesis.cancel(); player.pause(); stopLevel() }
+
+/** Listens continuously until a phrase matches (the wake line). Returns a stop function. */
+export function listenFor(match: RegExp, onHit: (text: string) => void): () => void {
+  if (!Recognition) return () => {}
+  let active = true
+  let rec: SR | null = null
+  const start = () => {
+    if (!active) return
+    rec = new Recognition()
+    rec.lang = 'es-CL'
+    rec.interimResults = true
+    rec.continuous = true
+    rec.onresult = (e: any) => {
+      let heard = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) heard += e.results[i][0].transcript
+      if (active && match.test(heard)) { active = false; rec?.stop(); onHit(heard) }
+    }
+    rec.onerror = () => {}
+    rec.onend = () => { if (active) setTimeout(start, 250) } // Chrome ends sessions on silence: keep it going
+    try { rec.start() } catch { /* already running */ }
+  }
+  start()
+  return () => { active = false; rec?.abort() }
+}

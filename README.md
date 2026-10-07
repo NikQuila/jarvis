@@ -8,8 +8,9 @@ git), en un servidor de DigitalOcean que está prendido 24/7. Le hablo de dos fo
 - **Por WhatsApp.** Le escribo o le mando un audio desde cualquier parte. Me manda el día en la mañana, me avisa antes
   de cada bloque del calendario, y hace las cosas que le pido: mueve el calendario, crea tareas, me resume un podcast,
   edita mis notas.
-- **En un HUD estilo Iron Man** (`/jarvis`), con voz. Muestra cómo dormí (WHOOP), la plata de mis apps (RevenueCat) y la
-  agenda del día, y le hablo con el micrófono.
+- **En un HUD estilo Iron Man** (`/jarvis`), con voz. Le digo *"Buongiorno, JARVIS. ¿Cómo se viene el día?"*, el
+  reactor se enciende y me cuenta el día: cómo dormí (WHOOP), cómo va mi app (RevenueCat) y lo que tengo en la agenda.
+  Después le sigo hablando con el micrófono.
 
 Los dos usan el mismo cerebro, así que sabe lo mismo por los dos lados.
 
@@ -33,7 +34,8 @@ Lo armé con Claude Code. Este repo tiene todo para que armes el tuyo.
 | 🧠 **Tu vault** | Lee y edita tus notas, y hace commit + push de todo |
 | 🎧 **Podcasts** | Busca el episodio, lo transcribe en el servidor con whisper.cpp y te lo resume |
 | 🔌 **Tus herramientas** | Lo que conectes por MCP: Linear, Notion, RevenueCat, Supabase, GitHub, tu banco (solo lectura)… |
-| 🖥️ **HUD con voz** | Biometría de WHOOP, KPIs de RevenueCat y la agenda, con subtítulos y micrófono. Tocas un evento y ves su detalle |
+| 🖥️ **HUD con voz** | Biometría de WHOOP, KPIs de RevenueCat y la agenda, con micrófono. Tocas un evento y ves su detalle |
+| 🗣️ **"¿Cómo se viene el día?"** | Le dices la frase y el reactor se enciende: te cuenta el día en voz alta, con energía, con voz natural (ElevenLabs o Microsoft) y subtítulos de película |
 
 ## Cómo funciona
 
@@ -61,8 +63,9 @@ Tu WhatsApp ◄── API de Kapso ◄──────────────
 | Cuenta **Kapso** | El número de WhatsApp, por la API oficial de Meta | Free: 1 número, 2.000 mensajes/mes. Meta cobra aparte por mensaje |
 | Servidor **DigitalOcean** | Que esté prendido aunque tu Mac esté apagado | ~US$24/mes (2 vCPU / 4 GB, whisper lo necesita) |
 | `gh` y `doctl` en tu Mac | Para los pasos de abajo | gratis |
+| Voz de **ElevenLabs** (opcional) | La voz más natural del HUD. Sin esto usa las voces de Microsoft, gratis | Starter: US$6/mes (30.000 caracteres ≈ 70 reportes) |
 
-**Total: ~US$24 al mes más tu plan de Claude.**
+**Total: ~US$24 al mes más tu plan de Claude** (y US$6 si quieres la voz de ElevenLabs).
 
 ---
 
@@ -188,8 +191,26 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
 
 - **Paneles:** biometría de WHOOP (recovery, HRV, FC en reposo, sueño), revenue y MRR de RevenueCat y la agenda del
   día, con cuenta regresiva a lo próximo. Tocas un evento y ves su checklist, la gente y el link de la reunión.
-- **Voz:** micrófono y respuestas habladas con la Web Speech API (Chrome y Safari). Arranca con un saludo en italiano
-  (lo cambias con `JARVIS_BOOT_LINES`).
+- **Cómo se despierta:** abres el HUD y tocas la pantalla una vez (el navegador exige ese toque para el audio y el
+  micrófono). Queda en negro, escuchando. Le dices *"Buongiorno, JARVIS. ¿Cómo se viene el día?"*, el reactor se
+  enciende y te cuenta el día: cómo dormiste, cómo va tu app (suscriptores nuevos de hoy si los tienes, MRR), cómo
+  vienen tus proyectos y la agenda. Si el micrófono no te entiende, `Espacio` o un toque hacen lo mismo.
+- **El reporte del día** lo escribe Claude con los datos de los paneles (unos 20-30 s). El HUD lo pide apenas abres la
+  página, así que **espera ~40 segundos antes de tocar** y responde sin demora. Se renueva cada 5 minutos; si repites la
+  toma antes, dice lo mismo y no gasta créditos de voz. No nombra clientes ni personas, por si lo grabas.
+- **Voz:** el servidor genera el audio y el reactor late con la voz real. Usa la primera que tengas configurada:
+  1. **ElevenLabs** (`ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID`): la más natural y la única que "actúa". Las voces
+     latinas de la biblioteca y el modelo `eleven_v4` necesitan plan pagado (Starter, US$6). Busca en
+     [la biblioteca](https://elevenlabs.io/app/voice-library) por idioma y estilo; la de este JARVIS es *Mario*
+     (`tomkxGQGz4b1kE0EM722`).
+  2. **Microsoft, gratis** (`EDGE_TTS_VOICE`): las voces neuronales de Edge con
+     [edge-tts](https://github.com/rany2/edge-tts) (`pipx install edge-tts` en el servidor). Claras y naturales, sin
+     cuenta. Hay de casi todos los países: `es-CL-LorenzoNeural`, `es-MX-JorgeNeural`, `es-AR-TomasNeural`… (lista:
+     `edge-tts --list-voices`). Ojo: no es una API oficial y Microsoft podría cortarla.
+  3. **La del navegador** (Web Speech API), si no configuras nada. Suena robótica.
+
+  El micrófono usa el reconocimiento de voz del navegador (Chrome y Safari).
+- **Subtítulos de película:** mientras JARVIS habla se ve solo la frase que está diciendo, grande y al centro.
 - **Música:** un *swell* al arrancar, un fondo bajo y un tema que sube mientras JARVIS trabaja. Son de Kevin MacLeod
   (CC BY 4.0, ver `jarvis-ui/public/audio/CREDITS.md`); reemplaza cualquier MP3 por otro con el mismo nombre.
 - **Para grabar la pantalla:** `F` la deja en pantalla completa y `R` activa el **modo grabación**, que difumina los montos
@@ -197,15 +218,16 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
 
 | Tecla | Qué hace |
 |---|---|
-| `Espacio` | Hablar (en el Mac) |
+| `Espacio` | Hablar (en el Mac). En la pantalla negra, despierta a JARVIS |
 | `F` | Pantalla completa |
 | `R` | Modo grabación |
 | `M` | Silenciar la música |
 - **Código:** `jarvis-ui/` (Vite + React + three.js). El reactor 3D y la secuencia de arranque vienen de
   [adewaskar/jarvis](https://github.com/adewaskar/jarvis) (MIT, ver `jarvis-ui/LICENSE`). Los paneles, la voz y la
   conexión con el servidor están en `src/App.tsx` y `src/nik/`.
-- **API:** `GET /jarvis/api/state` (los datos de los paneles) y `POST /jarvis/api/ask` (pregunta → respuesta corta para
-  voz, con su propia sesión). Está protegida con `JARVIS_TOKEN`: sin la clave, responde 401.
+- **API:** `GET /jarvis/api/state` (los datos de los paneles), `GET /jarvis/api/briefing` (el reporte del día),
+  `POST /jarvis/api/ask` (pregunta → respuesta corta para voz, con su propia sesión) y `POST /jarvis/api/tts` (texto →
+  MP3). Está protegida con `JARVIS_TOKEN`: sin la clave, responde 401.
 
 ```bash
 # en tu Mac
@@ -241,8 +263,10 @@ Nada tuyo vive en el código. Lo personal está en dos lugares:
 | `OWNER_NAME` | Cómo te llama | `Tony` |
 | `JARVIS_REVENUE_TITLE` | El título del panel de RevenueCat | `MI APP` |
 | `JARVIS_CALENDAR_LABELS` | El nombre de cada calendario, según el final del correo | `{"@gmail.com":"PERSONAL","@acme.com":"ACME"}` |
-| `JARVIS_BOOT_LINES` | Lo que dice al arrancar, mañana\|tarde. Vacío = nada | `Buongiorno.\|Buonasera.` |
-| `JARVIS_BOOT_LANG` | El idioma de esa frase | `it` o `es` |
+| `JARVIS_WAKE_LINE` | Tu frase para despertarlo (es el subtítulo; cualquier frase con "giorno", "JARVIS" o "despierta" lo enciende) | `Buon fucking giorno, JARVIS. ¿Cómo se viene el día?` |
+| `JARVIS_CALL_ME` | Cómo te llama en el reporte (si no, `OWNER_NAME`) | `Nicolás` |
+| `JARVIS_BRIEFING_STYLE` | El tono del reporte | `calmado y británico, como el JARVIS de la película` |
+| `JARVIS_BRIEFING_COMPANY_NUMBERS` | Que diga también el ARR de `JARVIS_COMPANIES` (por defecto solo los de tu app) | `1` |
 | `JARVIS_COMPANIES` | ARR a mano de empresas sin fuente en vivo | `[{"name":"Acme","arr":120000}]` |
 | `GREETING_READ` | Qué lee Claude de tu vault para escribirte los buenos días | `Me.md y la nota más reciente de Journal/` |
 | `GREETING_STYLE` | El tono de ese mensaje | `español casual, cálido y con energía` |
@@ -268,6 +292,9 @@ root). Guarda cada token en `~/.config/<servicio>.env` con `chmod 600`, nunca en
 | **GitHub (repos de una org)** | github.com/settings/personal-access-tokens/new → Resource owner: la org · solo esos repos · **Contents** y **Pull requests**: Read and write. Si la org lo pide, apruébalo | Un token por org: `git config --global --add url."https://x-access-token:<tok>@github.com/<org>/".insteadOf "https://github.com/<org>/"` (y otro `insteadOf` para `git@github.com:<org>/` si hay submódulos). Clónalo y súmalo a `MIRROR_REPOS`. Para PRs: `GITHUB_<ORG>_TOKEN=<tok>` en `kapso.env` |
 | **Supabase** | Access token de tu cuenta | MCP `supabase` en modo **read-only**. Dile en el prompt que solo devuelva agregados, nunca datos personales de tus usuarios |
 | **Banco (Mercury u otro)** | Token **solo lectura**. Nunca "Read and Write" | Variable en `kapso.env`. Dile en el prompt que consulte saldos en vivo y no los escriba en archivos |
+| **ElevenLabs** (voz del HUD) | elevenlabs.io → Developers → API Keys, con permiso de **Text to Speech** | `ELEVENLABS_API_KEY` y `ELEVENLABS_VOICE_ID` en `kapso.env` (el ID está en la ficha de cada voz). Opcional: `ELEVENLABS_MODEL` (por defecto `eleven_v4`) |
+| **Voz gratis de Microsoft** | No necesita token | `pipx install edge-tts` como `assistant` y `EDGE_TTS_VOICE=es-MX-JorgeNeural` en `kapso.env`. Velocidad y tono: `EDGE_TTS_RATE=+15%`, `EDGE_TTS_PITCH=+2Hz` |
+| **Suscriptores de hoy** (reporte) | Si guardas los webhooks de RevenueCat en Supabase en una tabla `rc_events` | `RC_EVENTS_SUPABASE_REF=<project ref>` + `SUPABASE_ACCESS_TOKEN` en `kapso.env`. El reporte dice los suscriptores nuevos de hoy contra tu promedio diario |
 
 Si un MCP no conecta: `claude mcp get <nombre>`. Si responde 401, el token está mal o revocado.
 

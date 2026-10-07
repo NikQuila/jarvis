@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { AgendaItem, JarvisState } from './api'
 import type { Phase } from '../store'
+import { speechProgress } from './voice'
 import { music } from './music'
 
 export type Line = { who: 'user' | 'jarvis'; text: string }
@@ -169,6 +170,24 @@ export function Companies({ list }: { list: NonNullable<JarvisState['companies']
   )
 }
 
+/** While JARVIS talks, only the sentence he's saying is shown, big, like film subtitles. */
+function Caption({ text }: { text: string }) {
+  const sentences = text.match(/[^.!?¿¡]*[¿¡]?[^.!?]+[.!?]+|[^.!?]+$/g)?.map((x) => x.trim()).filter(Boolean) ?? [text]
+  const [i, setI] = useState(0)
+  useEffect(() => {
+    const ends: number[] = []
+    let acc = 0
+    for (const x of sentences) { acc += x.length; ends.push(acc / text.length) }
+    const id = setInterval(() => {
+      const pr = speechProgress()
+      const k = ends.findIndex((e) => pr < e - 0.01)
+      setI(k === -1 ? sentences.length - 1 : k)
+    }, 120)
+    return () => clearInterval(id)
+  }, [text])
+  return <p className="nik-caption" key={i}>{sentences[i]}</p>
+}
+
 export function Hud(p: {
   data: JarvisState | null; lines: Line[]; interim: string; phase: Phase; error: string | null
   onMic: () => void; onSend: (t: string) => void; canListen: boolean
@@ -215,7 +234,7 @@ export function Hud(p: {
       {open && <EventCard e={open} onClose={() => setOpen(null)} labels={ui?.calendarLabels} rec={rec} />}
 
       <div className="nik-subs">
-        {last.map((l, i) => (
+        {p.phase === 'speaking' && last.at(-1)?.who === 'jarvis' ? <Caption text={last.at(-1)!.text} /> : last.map((l, i) => (
           <p key={i} className={`nik-line ${l.who}`} style={{ opacity: 0.35 + (0.65 * (i + 1)) / last.length }}>
             <b>{l.who === 'user' ? 'TÚ' : 'JARVIS'}</b> {l.text}
           </p>
