@@ -15,6 +15,8 @@ Los dos usan el mismo cerebro, así que sabe lo mismo por los dos lados.
 
 Lo armé con Claude Code. Este repo tiene todo para que armes el tuyo.
 
+📸 Cuento cómo lo construí en Instagram: [@nicolaspirozzim](https://www.instagram.com/nicolaspirozzim/)
+
 ![JARVIS](docs/jarvis.jpg)
 <sub>El HUD en modo demo (`JARVIS_DEMO=1`), con datos inventados.</sub>
 
@@ -314,4 +316,4 @@ armaste y algo no se entendía, eso también es un PR.
 
 Licencia MIT ([`LICENSE`](LICENSE)). El HUD conserva la licencia MIT de adewaskar/jarvis ([`jarvis-ui/LICENSE`](jarvis-ui/LICENSE)).
 
-Hecho por [Nicolás Pirozzi](https://www.instagram.com/nicolaspirozzim/). Si armas el tuyo, mándame una foto. Vamo arriba.
+Hecho por Nicolás Pirozzi · Instagram [@nicolaspirozzim](https://www.instagram.com/nicolaspirozzim/). Si armas el tuyo, mándame una foto por ahí. Vamo arriba.
