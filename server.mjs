@@ -276,7 +276,7 @@ function whoopRun(arg) {
     const child = spawn(process.execPath, [path.join(DIR, 'whoop.mjs'), arg], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (d) => (out += d));
-    const t = setTimeout(() => child.kill(), 30_000);
+    const t = setTimeout(() => child.kill(), 12_000); // WHOOP's API can stall; the HUD shows '--' instead of hanging
     child.on('close', (code) => { clearTimeout(t); resolve(code === 0 ? out.trim() : null); });
   });
 }
@@ -504,7 +504,7 @@ async function jarvisStateFresh() {
   }
   if (process.env.REVENUECAT_API_KEY && process.env.REVENUECAT_PROJECT_ID) {
     try {
-      const r = await fetch(`https://api.revenuecat.com/v2/projects/${process.env.REVENUECAT_PROJECT_ID}/metrics/overview`, { headers: { Authorization: `Bearer ${process.env.REVENUECAT_API_KEY}` } });
+      const r = await fetch(`https://api.revenuecat.com/v2/projects/${process.env.REVENUECAT_PROJECT_ID}/metrics/overview`, { signal: AbortSignal.timeout(8000), headers: { Authorization: `Bearer ${process.env.REVENUECAT_API_KEY}` } });
       const m = Object.fromEntries(((await r.json()).metrics || []).map((x) => [x.id, x.value]));
       out.revenue = { revenue28d: m.revenue, mrr: m.mrr, activeSubs: m.active_subscriptions, trials: m.active_trials, newCustomers28d: m.new_customers };
     } catch { out.revenue = null; }
@@ -548,7 +548,7 @@ async function revenueDaysFresh() {
       count(*) filter (where type = 'INITIAL_PURCHASE' and period_type = 'TRIAL') as trials,
       round(coalesce(sum(price) filter (where type in ('INITIAL_PURCHASE', 'RENEWAL', 'NON_RENEWING_PURCHASE')), 0)) as revenue
     from d group by 1 order by 1 desc`;
-  const r = await fetch(`https://api.supabase.com/v1/projects/${process.env.RC_EVENTS_SUPABASE_REF}/database/query/read-only`, {
+  const r = await fetch(`https://api.supabase.com/v1/projects/${process.env.RC_EVENTS_SUPABASE_REF}/database/query/read-only`, { signal: AbortSignal.timeout(8000),
     method: 'POST', headers: { Authorization: `Bearer ${process.env.SUPABASE_ACCESS_TOKEN}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ query: sql }),
   });
