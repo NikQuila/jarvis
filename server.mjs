@@ -249,7 +249,7 @@ function refreshAgenda() {
     `[{"id":"...","title":"...","start":"ISO 8601 with offset","end":"ISO 8601 with offset","description":"plain text (strip HTML), keep line breaks, max 1500 chars, \"\" if none",` +
     `"calendar":"calendarId it came from","link":"the event's htmlLink","location":"\"\" if none","meet":"video call URL (hangoutLink or conferenceData entry point), \"\" if none",` +
     `"attendees":["display name, or email if no name; exclude me; max 12; [] if none"]}]`,
-    { model: 'sonnet', tools: ['mcp__claude_ai_Google_Calendar'] },
+    { model: 'opus', tools: ['mcp__claude_ai_Google_Calendar'] },
   ).then((out) => {
     const json = out.slice(out.indexOf('['), out.lastIndexOf(']') + 1);
     try {
@@ -315,7 +315,7 @@ async function morningGreeting(firstEvent) {
     `2 o 3 líneas cortas, ${GREETING_STYLE}, específico: algo real de ayer o de hoy, nada genérico. ` +
     `Sin listas ni títulos; solo *negrita* de WhatsApp si hace falta. Todavía no sabe cómo durmió: no inventes datos de sueño. ` +
     `Termina con una frase corta para que responda; cuando responda, TÚ le vas a mandar cómo durmió y su día (no se lo pidas a él). Devuelve solo el texto del mensaje.`,
-    { model: 'sonnet', tools: ['Read', 'Glob', 'Grep'], cwd: cfg.vault },
+    { model: 'opus', tools: ['Read', 'Glob', 'Grep'], cwd: cfg.vault },
   );
   return text && !text.startsWith('⚠️') ? text.trim() : fallback;
 }
@@ -414,8 +414,8 @@ async function whoopCallback(url, res) {
 // ---------- Jarvis (web HUD) ----------
 // Static UI in ./jarvis, API under /jarvis/api/*, protected by JARVIS_TOKEN (sent as ?k= once, then a header).
 const JARVIS_DIR = path.join(DIR, 'jarvis');
-// The HUD talks out loud, so speed beats depth: a faster model, and a fresh conversation after a pause.
-const JARVIS_MODEL = process.env.JARVIS_MODEL || 'sonnet';
+// The HUD talks out loud: Opus is fast enough now, and the conversation starts fresh after a pause.
+const JARVIS_MODEL = process.env.JARVIS_MODEL || 'opus';
 const JARVIS_FRESH_AFTER_MS = 30 * 60_000;
 const JARVIS_VOICE = `
 
@@ -623,7 +623,7 @@ async function jarvisBriefing(at = '') {
       `No nombres clientes, empresas externas ni personas (puede ir a un video): di "una reunión", no con quién. ` +
       `Máximo 6 oraciones cortas y 65 palabras en total. Solo texto para decir en voz alta: sin markdown, sin emojis, sin listas, horas como "a las cuatro". ` +
       `Datos (JSON): ${JSON.stringify(data)}`,
-      { model: 'sonnet', tools: ['Read'], cwd: DIR },
+      { model: 'opus', tools: ['Read'], cwd: DIR },
     );
     const text = out.startsWith('⚠️') || out.length < 20 ? briefingFallback(s) : out.trim();
     Object.assign(briefingCache, { at: Date.now(), text });

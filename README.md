@@ -202,7 +202,7 @@ Un HUD estilo Iron Man que habla con el mismo cerebro, con voz en español: `htt
   página, así que **espera ~40 segundos antes de hablarle** y responde sin demora. Se renueva cada 5 minutos; si repites
   la toma antes, dice lo mismo y no gasta créditos de voz. No nombra clientes ni personas, por si lo grabas.
 - **Respuestas rápidas:** las preguntas ("¿cómo dormí?", "¿qué viene después?") se contestan en ~5 segundos con los
-  datos del HUD, sin herramientas y con un modelo rápido (`JARVIS_MODEL`, por defecto `sonnet`). Lo que le pides hacer
+  datos del HUD, sin herramientas y con Opus (`JARVIS_MODEL`, por defecto `opus`). Lo que le pides hacer
   ("mueve…", "crea…", "anota…") va al agente completo, que puede actuar y tarda 15-30 segundos.
 - **Las pantallas de alrededor:** si tienes más monitores, toca **⧉ PANTALLAS** (o `S`). Se abre una ventana en cada
   uno con un fondo que continúa el HUD: los anillos del reactor entran desde el lado donde está el HUD. Mientras JARVIS
@@ -281,7 +281,7 @@ Nada tuyo vive en el código. Lo personal está en dos lugares:
 | `JARVIS_WAKE_LINE` | Tu frase para despertarlo: es tu subtítulo en pantalla (cualquier cosa que digas lo despierta) | `Buon fucking giorno, JARVIS.` |
 | `JARVIS_GREETINGS` | Cómo te saluda en la mañana\|tarde\|noche | `¡Buon fucking giorno\|¡Buon fucking pomeriggio\|¡Buona fucking sera` |
 | `JARVIS_SCREENS` | Qué página abre cada pantalla de alrededor según lo que dice JARVIS | `[{"match":"dorm\|recuper","url":"https://app.whoop.com/"}]` |
-| `JARVIS_MODEL` | El modelo de las respuestas del HUD | `sonnet` (rápido) u `opus` (más profundo) |
+| `JARVIS_MODEL` | El modelo de las respuestas del HUD | `opus` (por defecto, Opus 5.5) o `sonnet` |
 | `JARVIS_CALL_ME` | Cómo te llama en el reporte (si no, `OWNER_NAME`) | `Nicolás` |
 | `JARVIS_BRIEFING_STYLE` | El tono del reporte | `calmado y británico, como el JARVIS de la película` |
 | `JARVIS_BRIEFING_COMPANY_NUMBERS` | Que diga también el ARR de `JARVIS_COMPANIES` (por defecto solo los de tu app) | `1` |
