@@ -688,7 +688,7 @@ function readJson(req) {
 }
 
 // Asking him to do something (move, create, write, search…) needs the full agent; anything else is a question.
-const JARVIS_ACTION = /\b(mueve|mov[eé]|muével|cambia|crea|agend|agrega|añad|pon(e|me|lo|la)?|borra|elimina|cancela|anota|escrib|manda|env[ií]a|programa|recu[eé]rd|busca|investiga|revisa|abre|ab[ií]r|linear|tarea|commit|guarda|actualiza|responde|contesta|estudia|resume)\b/i;
+const JARVIS_ACTION = /\b(mueve|mov[eé]|muével|cambia|crea|agend|agrega|añad|pon(e|me|lo|la)?|borra|elimina|cancela|anota|escrib|manda|env[ií]a|programa|recu[eé]rd|busca|investiga|revisa|abre|ab[ií]r|linear|notion|tareas?|pendientes?|correos?|mails?|slack|drive|planilla|sheets?|docs?|commit|guarda|actualiza|responde|contesta|estudia|resume)\b/i;
 const quickHistory = []; // the last few HUD exchanges, so follow-ups make sense
 function jarvisRemember(q, a) { quickHistory.push({ q, a }); while (quickHistory.length > 6) quickHistory.shift(); }
 async function jarvisQuick(text, hora) {
